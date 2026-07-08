@@ -2,8 +2,8 @@
 set -euo pipefail
 
 COMFY_DIR="${COMFY_DIR:-/opt/ComfyUI}"
-MODEL_ROOT="${MODEL_ROOT:-/runpod-volume/ALARA_PROD/ComfyUI/models}"
-COMFY_OUTPUT_DIR="${COMFY_OUTPUT_DIR:-/runpod-volume/ALARA_PROD/ComfyUI/output}"
+MODEL_ROOT="${MODEL_ROOT:-/workspace/ALARA_PROD/ComfyUI/models}"
+COMFY_OUTPUT_DIR="${COMFY_OUTPUT_DIR:-/workspace/ALARA_PROD/ComfyUI/output}"
 COMFY_HOST="${COMFY_HOST:-127.0.0.1}"
 COMFY_PORT="${COMFY_PORT:-8188}"
 

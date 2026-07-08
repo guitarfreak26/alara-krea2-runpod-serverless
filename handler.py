@@ -18,8 +18,8 @@ import runpod
 
 APP_DIR = Path(__file__).resolve().parent
 COMFY_DIR = Path(os.getenv("COMFY_DIR", "/opt/ComfyUI"))
-CONFIGURED_MODEL_ROOT = Path(os.getenv("MODEL_ROOT", "/runpod-volume/ALARA_PROD/ComfyUI/models"))
-COMFY_OUTPUT_DIR = Path(os.getenv("COMFY_OUTPUT_DIR", "/runpod-volume/ALARA_PROD/ComfyUI/output"))
+CONFIGURED_MODEL_ROOT = Path(os.getenv("MODEL_ROOT", "/workspace/ALARA_PROD/ComfyUI/models"))
+COMFY_OUTPUT_DIR = Path(os.getenv("COMFY_OUTPUT_DIR", "/workspace/ALARA_PROD/ComfyUI/output"))
 COMFY_HOST = os.getenv("COMFY_HOST", "127.0.0.1")
 COMFY_PORT = int(os.getenv("COMFY_PORT", "8188"))
 COMFY_URL = os.getenv("COMFY_URL", f"http://{COMFY_HOST}:{COMFY_PORT}")

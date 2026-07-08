@@ -9,10 +9,10 @@
   "executionTimeoutSeconds": 1800,
   "idleTimeoutSeconds": 5,
   "networkVolumeId": "1xwpz4c2a5",
-  "volumeMountPath": "/runpod-volume",
+  "volumeMountPath": "/workspace",
   "env": {
-    "MODEL_ROOT": "/runpod-volume/ALARA_PROD/ComfyUI/models",
-    "COMFY_OUTPUT_DIR": "/runpod-volume/ALARA_PROD/ComfyUI/output",
+    "MODEL_ROOT": "/workspace/ALARA_PROD/ComfyUI/models",
+    "COMFY_OUTPUT_DIR": "/workspace/ALARA_PROD/ComfyUI/output",
     "MAX_COUNT": "8"
   }
 }
