@@ -1,0 +1,18 @@
+{
+  "name": "alara-krea2-bf16",
+  "type": "queue",
+  "dockerImage": "ghcr.io/guitarfreak26/alara-krea2-serverless:bf16-v1",
+  "gpuType": "RTX 5090",
+  "gpuCount": 1,
+  "minWorkers": 0,
+  "maxWorkers": 1,
+  "executionTimeoutSeconds": 1800,
+  "idleTimeoutSeconds": 5,
+  "networkVolumeId": "1xwpz4c2a5",
+  "volumeMountPath": "/runpod-volume",
+  "env": {
+    "MODEL_ROOT": "/runpod-volume/ALARA_PROD/ComfyUI/models",
+    "COMFY_OUTPUT_DIR": "/runpod-volume/ALARA_PROD/ComfyUI/output",
+    "MAX_COUNT": "8"
+  }
+}

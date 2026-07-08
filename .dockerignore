@@ -1,0 +1,12 @@
+.git
+.github
+__pycache__
+*.pyc
+.DS_Store
+node_modules
+outputs
+*.safetensors
+*.ckpt
+*.gguf
+*.pt
+*.pth

@@ -1,0 +1,73 @@
+{
+  "characters": {
+    "seoyeon": {
+      "display_name": "Seoyeon",
+      "trigger": "seokrea",
+      "identity_lora": "seokrea.safetensors"
+    },
+    "akari": {
+      "display_name": "Akari",
+      "trigger": "akarikrea",
+      "identity_lora": "Krea2/akarikrea.safetensors"
+    },
+    "gabi": {
+      "display_name": "Gabriela",
+      "aliases": ["gabriela", "gabriella"],
+      "trigger": "gabikrea",
+      "identity_lora": "Krea2/gabikrea.safetensors"
+    },
+    "maeve": {
+      "display_name": "Maeve",
+      "trigger": "maevekrea",
+      "identity_lora": "Krea2/maevekrea.safetensors",
+      "status": "placeholder until Maeve Krea2 LoRA is copied onto Alara Storage"
+    }
+  },
+  "workflows": {
+    "krea2-bf16": {
+      "type": "image",
+      "family": "krea2",
+      "file": "workflows/krea2-bf16-api.json",
+      "description": "Krea2 Turbo BF16 image workflow with runtime-patched identity LoRA and user-supplied prompt.",
+      "default_width": 1280,
+      "default_height": 720,
+      "aspect_ratios": {
+        "landscape": { "width": 1280, "height": 720 },
+        "portrait": { "width": 720, "height": 1280 },
+        "tall": { "width": 1080, "height": 1920 },
+        "story": { "width": 1080, "height": 1920 },
+        "square": { "width": 1024, "height": 1024 },
+        "high_res_portrait": { "width": 1536, "height": 2048 }
+      },
+      "patch_points": {
+        "prompt": "6.inputs.text",
+        "negative_prompt": "7.inputs.text",
+        "seed": "2.inputs.seed",
+        "width": "10.inputs.width",
+        "height": "10.inputs.height",
+        "count": "10.inputs.batch_size",
+        "filename_prefix": "22.inputs.filename_prefix",
+        "identity_lora": "30.inputs.lora_name",
+        "identity_strength_model": "30.inputs.strength_model",
+        "identity_strength_clip": "30.inputs.strength_clip",
+        "realism_strength_model": "31.inputs.strength_model",
+        "realism_strength_clip": "31.inputs.strength_clip",
+        "detail_strength_model": "32.inputs.strength_model",
+        "detail_strength_clip": "32.inputs.strength_clip"
+      },
+      "output_nodes": ["22"],
+      "models": {
+        "diffusion_models": ["krea2_turbo_bf16.safetensors"],
+        "text_encoders": ["qwen3vl_4b_fp8_scaled.safetensors"],
+        "vae": ["qwen_image_vae.safetensors"],
+        "loras": [
+          "seokrea.safetensors",
+          "Krea2/akarikrea.safetensors",
+          "Krea2/gabikrea.safetensors",
+          "krea2_realism_lora.safetensors",
+          "Krea2/Civitai/KNPV3_1.safetensors"
+        ]
+      }
+    }
+  }
+}
