@@ -11,7 +11,7 @@ The Docker image contains ComfyUI, lightweight Krea2 helper nodes, and the handl
 Default endpoint target:
 
 ```text
-GPU: RTX 5090
+GPU: NVIDIA GeForce RTX 5090 first, with RTX 6000 Ada / L40S / RTX PRO 6000 fallback options
 Network volume: AlaraStorage / 1xwpz4c2a5
 Volume mount: /workspace
 MODEL_ROOT=/workspace/ALARA_PROD/ComfyUI/models

@@ -1,8 +1,8 @@
 {
   "name": "alara-krea2-bf16",
   "type": "queue",
-  "dockerImage": "ghcr.io/guitarfreak26/alara-krea2-serverless:bf16-v1",
-  "gpuType": "RTX 5090",
+  "dockerImage": "ghcr.io/guitarfreak26/alara-krea2-serverless:ab98ca23262ce994d3f5659a9c6afa281c222b5d",
+  "gpuType": "NVIDIA GeForce RTX 5090",
   "gpuCount": 1,
   "minWorkers": 0,
   "maxWorkers": 1,
