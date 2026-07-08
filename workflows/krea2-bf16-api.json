@@ -1,7 +1,7 @@
 {
   "15": {
     "inputs": {
-      "unet_name": "krea2_turbo_bf16.safetensors",
+      "unet_name": "krea2_turbo_bf16_serverless.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -11,7 +11,7 @@
   },
   "18": {
     "inputs": {
-      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "clip_name": "qwen3vl_4b_fp8_scaled_serverless.safetensors",
       "type": "krea2",
       "device": "default"
     },
@@ -22,7 +22,7 @@
   },
   "4": {
     "inputs": {
-      "vae_name": "qwen_image_vae.safetensors"
+      "vae_name": "qwen_image_vae_serverless.safetensors"
     },
     "class_type": "VAELoader",
     "_meta": {

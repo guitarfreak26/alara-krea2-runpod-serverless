@@ -57,9 +57,9 @@
       },
       "output_nodes": ["22"],
       "models": {
-        "diffusion_models": ["krea2_turbo_bf16.safetensors"],
-        "text_encoders": ["qwen3vl_4b_fp8_scaled.safetensors"],
-        "vae": ["qwen_image_vae.safetensors"],
+        "diffusion_models": ["krea2_turbo_bf16_serverless.safetensors"],
+        "text_encoders": ["qwen3vl_4b_fp8_scaled_serverless.safetensors"],
+        "vae": ["qwen_image_vae_serverless.safetensors"],
         "loras": [
           "seokrea.safetensors",
           "Krea2/akarikrea.safetensors",
