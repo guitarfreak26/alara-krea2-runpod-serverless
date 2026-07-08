@@ -18,4 +18,9 @@ MODEL_ROOT=/workspace/ALARA_PROD/ComfyUI/models
 COMFY_OUTPUT_DIR=/workspace/ALARA_PROD/ComfyUI/output
 ```
 
+At runtime the worker resolves the output directory from the model root it
+actually finds. If Serverless exposes Alara Storage at `/runpod-volume`, models
+are loaded from `/runpod-volume/.../models` and outputs are saved to the sibling
+`/runpod-volume/.../output` path even when the template fallback is `/workspace`.
+
 This worker is content-neutral infrastructure. Prompts are supplied by the caller and are not stored in this repository.

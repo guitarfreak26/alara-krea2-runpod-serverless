@@ -19,7 +19,7 @@ import runpod
 APP_DIR = Path(__file__).resolve().parent
 COMFY_DIR = Path(os.getenv("COMFY_DIR", "/opt/ComfyUI"))
 CONFIGURED_MODEL_ROOT = Path(os.getenv("MODEL_ROOT", "/workspace/ALARA_PROD/ComfyUI/models"))
-COMFY_OUTPUT_DIR = Path(os.getenv("COMFY_OUTPUT_DIR", "/workspace/ALARA_PROD/ComfyUI/output"))
+CONFIGURED_COMFY_OUTPUT_DIR = Path(os.getenv("COMFY_OUTPUT_DIR", "/workspace/ALARA_PROD/ComfyUI/output"))
 COMFY_HOST = os.getenv("COMFY_HOST", "127.0.0.1")
 COMFY_PORT = int(os.getenv("COMFY_PORT", "8188"))
 COMFY_URL = os.getenv("COMFY_URL", f"http://{COMFY_HOST}:{COMFY_PORT}")
@@ -33,6 +33,7 @@ _comfy_process: subprocess.Popen[str] | None = None
 _comfy_lock = threading.Lock()
 _registry_cache: dict[str, Any] | None = None
 _model_root_cache: Path | None = None
+_output_dir_cache: Path | None = None
 
 
 class WorkerError(RuntimeError):
@@ -109,6 +110,29 @@ def _resolve_model_root(workflow_config: dict[str, Any]) -> Path:
     return _model_root_cache
 
 
+def _resolve_output_dir(workflow_config: dict[str, Any]) -> Path:
+    global _output_dir_cache
+    if _output_dir_cache is not None:
+        return _output_dir_cache
+
+    model_root = _resolve_model_root(workflow_config)
+    if model_root.name == "models":
+        _output_dir_cache = model_root.parent / "output"
+    else:
+        _output_dir_cache = CONFIGURED_COMFY_OUTPUT_DIR
+
+    if _output_dir_cache != CONFIGURED_COMFY_OUTPUT_DIR:
+        print(
+            f"[handler] using COMFY_OUTPUT_DIR={_output_dir_cache} "
+            f"(configured {CONFIGURED_COMFY_OUTPUT_DIR})",
+            flush=True,
+        )
+    else:
+        print(f"[handler] using COMFY_OUTPUT_DIR={_output_dir_cache}", flush=True)
+
+    return _output_dir_cache
+
+
 def _set_path(obj: dict[str, Any], dotted_path: str, value: Any) -> None:
     current: Any = obj
     parts = dotted_path.split(".")
@@ -149,13 +173,14 @@ def _ensure_comfy_running(workflow_config: dict[str, Any]) -> None:
             return
 
         model_root = _resolve_model_root(workflow_config)
-        COMFY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        output_dir = _resolve_output_dir(workflow_config)
+        output_dir.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.update(
             {
                 "COMFY_DIR": str(COMFY_DIR),
                 "MODEL_ROOT": str(model_root),
-                "COMFY_OUTPUT_DIR": str(COMFY_OUTPUT_DIR),
+                "COMFY_OUTPUT_DIR": str(output_dir),
                 "COMFY_HOST": COMFY_HOST,
                 "COMFY_PORT": str(COMFY_PORT),
             }
@@ -293,6 +318,7 @@ def _collect_outputs(history_item: dict[str, Any], workflow_config: dict[str, An
     output_nodes = set(str(node) for node in workflow_config.get("output_nodes", []))
     outputs: list[dict[str, Any]] = []
     history_outputs = history_item.get("outputs") or {}
+    output_dir = _resolve_output_dir(workflow_config)
 
     for node_id, node_output in history_outputs.items():
         if output_nodes and str(node_id) not in output_nodes:
@@ -300,16 +326,27 @@ def _collect_outputs(history_item: dict[str, Any], workflow_config: dict[str, An
         for image in node_output.get("images", []) or []:
             subfolder = image.get("subfolder", "")
             filename = image.get("filename", "")
+            output_path = output_dir / subfolder / filename
+            image_bytes: bytes | None = None
+            if not output_path.exists():
+                image_bytes = _download_view_image(image)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                output_path.write_bytes(image_bytes)
+                print(f"[handler] copied Comfy output to {output_path}", flush=True)
+            size_bytes = output_path.stat().st_size
             item = {
                 "type": "image",
                 "node_id": str(node_id),
                 "filename": filename,
                 "subfolder": subfolder,
                 "path_type": image.get("type", "output"),
-                "path": str(COMFY_OUTPUT_DIR / subfolder / filename),
+                "path": str(output_path),
+                "size_bytes": size_bytes,
             }
             if include_base64:
-                item["base64"] = base64.b64encode(_download_view_image(image)).decode("ascii")
+                if image_bytes is None:
+                    image_bytes = output_path.read_bytes()
+                item["base64"] = base64.b64encode(image_bytes).decode("ascii")
             outputs.append(item)
 
     return outputs
