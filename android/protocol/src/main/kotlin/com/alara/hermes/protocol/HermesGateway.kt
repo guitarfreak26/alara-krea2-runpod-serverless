@@ -68,4 +68,13 @@ interface HermesGateway {
     /** Durable per-session flags shared with the desktop sidebar. */
     suspend fun setPinned(sessionKey: String, pinned: Boolean)
     suspend fun setArchived(sessionKey: String, archived: Boolean)
+
+    /** Installed skills, read-only. */
+    suspend fun listSkills(): List<SkillInfo>
+
+    /** Cron automations with lifecycle control. */
+    suspend fun listAutomations(): List<AutomationInfo>
+    suspend fun setAutomationPaused(id: String, paused: Boolean)
+    suspend fun runAutomation(id: String)
+    suspend fun deleteAutomation(id: String)
 }

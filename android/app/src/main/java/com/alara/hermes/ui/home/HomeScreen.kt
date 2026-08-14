@@ -25,7 +25,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun HomeScreen(
     viewModel: com.alara.hermes.ui.HomeViewModel,
-    onOpenSettings: () -> Unit,
+    onOpenOverlay: (String) -> Unit,
     openSessionRequests: kotlinx.coroutines.flow.MutableStateFlow<String?>? = null,
 ) {
     val state by viewModel.state.collectAsState()
@@ -42,6 +42,11 @@ fun HomeScreen(
 
     BackHandler(enabled = navigator.canNavigateBack()) {
         scope.launch { navigator.navigateBack() }
+    }
+
+    // Back in the archived view returns to active conversations, not out of the app.
+    BackHandler(enabled = state.showArchived && !navigator.canNavigateBack()) {
+        viewModel.toggleArchivedView()
     }
 
     // Notification tap -> open that conversation.
@@ -77,7 +82,7 @@ fun HomeScreen(
                         onToggleArchivedView = viewModel::toggleArchivedView,
                         visibleSessions = viewModel.visibleSessions(state),
                         onRefresh = { viewModel.refreshSessions() },
-                        onOpenSettings = onOpenSettings,
+                        onOpenOverlay = onOpenOverlay,
                     )
                 }
             },

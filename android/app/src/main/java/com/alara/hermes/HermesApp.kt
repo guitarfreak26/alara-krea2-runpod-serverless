@@ -22,6 +22,7 @@ class AppContainer(app: Application) {
     val settings = SettingsRepository(app)
     val drafts = DraftsRepository(app)
     val pendingRuns = PendingRunsRepository(app)
+    val archivedRegistry = com.alara.hermes.data.ArchivedRegistry(app)
     val notifications = NotificationCenter(app, settings, pendingRuns, appScope)
 
     /** Session key a notification tap asked us to open. */

@@ -99,6 +99,8 @@ class ApiServerGateway(
         val runSubmission: Boolean = false,
         /** POST /api/sessions/{id}/chat/stream — server-side history, no transcript resend. */
         val sessionChatStreaming: Boolean = false,
+        val skillsApi: Boolean? = null,
+        val jobsAvailable: Boolean? = null,
         val model: String? = null,
     )
 
@@ -115,6 +117,8 @@ class ApiServerGateway(
             approvals = capabilities?.runSubmission == true,
             // Thinking/fast ride each request as model_options overrides.
             sessionConfig = true,
+            skills = capabilities?.skillsApi != false,
+            automations = capabilities?.jobsAvailable != false,
         )
 
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
@@ -175,6 +179,11 @@ class ApiServerGateway(
                 ?: (endpoints?.get("runs") != null),
             sessionChatStreaming = (features?.get("session_chat_streaming") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
+            skillsApi = (features?.get("skills_api") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull(),
+            // jobs_admin=false means CRUD is locked down; listing may still work,
+            // so treat only an explicit false as absent when the probe fails later.
+            jobsAvailable = null,
             model = (caps?.get("model") as? JsonPrimitive)?.contentOrNull,
         )
         capabilities = parsed
@@ -382,6 +391,81 @@ class ApiServerGateway(
             }
         }
         _sessionsChanged.tryEmit(Unit)
+    }
+
+    override suspend fun listSkills(): List<SkillInfo> {
+        val payload = getJson(url("v1/skills"))
+        return dataRows(payload).mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            val name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            SkillInfo(
+                name = name,
+                description = (obj["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                category = (obj["category"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                disabled = (obj["disabled"] as? JsonPrimitive)?.contentOrNull == "true",
+            )
+        }
+    }
+
+    private fun parseJob(row: JsonElement): AutomationInfo? {
+        val obj = row as? JsonObject ?: return null
+        fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+        val id = str("id") ?: return null
+        val schedule = str("schedule_display")
+            ?: str("schedule")
+            ?: ((obj["schedule"] as? JsonObject)?.get("display") as? JsonPrimitive)?.contentOrNull
+            ?: ""
+        val lastRun = obj["last_run_at"] ?: obj["last_execution_at"]
+        return AutomationInfo(
+            id = id,
+            name = str("name")?.takeIf { it.isNotBlank() } ?: id,
+            schedule = schedule,
+            prompt = str("prompt").orEmpty(),
+            enabled = str("enabled") != "false",
+            paused = str("state") == "paused" ||
+                (obj["paused_at"] != null && obj["paused_at"] !is kotlinx.serialization.json.JsonNull),
+            lastRunAtMs = ((lastRun as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull())
+                ?.let { (it * 1000).toLong() },
+            lastStatus = str("last_status") ?: str("last_result"),
+        )
+    }
+
+    override suspend fun listAutomations(): List<AutomationInfo> {
+        val payload = getJson(url("api/jobs"))
+        val rows = (payload as? JsonObject)?.get("jobs") as? JsonArray ?: dataRows(payload)
+        return rows.mapNotNull(::parseJob)
+    }
+
+    private suspend fun postJobAction(id: String, action: String) {
+        withContext(Dispatchers.IO) {
+            restClient.newCall(
+                request(url("api/jobs", id, action))
+                    .post("{}".toRequestBody(jsonMedia)).build(),
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw HermesHttpException(response.code, "$action failed: HTTP ${response.code}")
+                }
+            }
+        }
+    }
+
+    override suspend fun setAutomationPaused(id: String, paused: Boolean) {
+        postJobAction(id, if (paused) "pause" else "resume")
+    }
+
+    override suspend fun runAutomation(id: String) {
+        postJobAction(id, "run")
+    }
+
+    override suspend fun deleteAutomation(id: String) {
+        withContext(Dispatchers.IO) {
+            restClient.newCall(request(url("api/jobs", id)).delete().build())
+                .execute().use { response ->
+                    if (!response.isSuccessful && response.code != 404) {
+                        throw HermesHttpException(response.code, "delete failed: HTTP ${response.code}")
+                    }
+                }
+        }
     }
 
     /** Pollable status of a run, for reconciling after process death. */

@@ -111,7 +111,7 @@ private fun OnboardingFlow(container: AppContainer) {
 @Composable
 private fun MainFlow(container: AppContainer) {
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
-    var settingsOpen by remember { mutableStateOf(false) }
+    var overlay by remember { mutableStateOf<String?>(null) }
 
     // Android 13+ requires runtime opt-in before any notification shows.
     if (Build.VERSION.SDK_INT >= 33) {
@@ -133,17 +133,20 @@ private fun MainFlow(container: AppContainer) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    if (settingsOpen) {
-        val connection by viewModel.state.collectAsState()
-        com.alara.hermes.ui.settings.SettingsScreen(
-            container = container,
-            connection = connection.connection,
-            onBack = { settingsOpen = false },
-        )
-    } else {
-        HomeScreen(
+    when (overlay) {
+        "settings" -> {
+            val connection by viewModel.state.collectAsState()
+            com.alara.hermes.ui.settings.SettingsScreen(
+                container = container,
+                connection = connection.connection,
+                onBack = { overlay = null },
+            )
+        }
+        "skills" -> com.alara.hermes.ui.manage.SkillsScreen(viewModel, onBack = { overlay = null })
+        "automations" -> com.alara.hermes.ui.manage.AutomationsScreen(viewModel, onBack = { overlay = null })
+        else -> HomeScreen(
             viewModel,
-            onOpenSettings = { settingsOpen = true },
+            onOpenOverlay = { overlay = it },
             openSessionRequests = container.pendingOpenSession,
         )
     }

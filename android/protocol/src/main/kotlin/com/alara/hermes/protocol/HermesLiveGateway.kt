@@ -258,6 +258,22 @@ class HermesLiveGateway(
         _sessionsChanged.tryEmit(Unit)
     }
 
+    override suspend fun listSkills(): List<SkillInfo> = rest.listSkills()
+
+    override suspend fun listAutomations(): List<AutomationInfo> = rest.listCronJobs()
+
+    override suspend fun setAutomationPaused(id: String, paused: Boolean) {
+        rest.cronJobAction(id, if (paused) "pause" else "resume")
+    }
+
+    override suspend fun runAutomation(id: String) {
+        rest.cronJobAction(id, "trigger")
+    }
+
+    override suspend fun deleteAutomation(id: String) {
+        rest.deleteCronJob(id)
+    }
+
     override suspend fun setPinned(sessionKey: String, pinned: Boolean) {
         rest.patchSession(sessionKey, handles[sessionKey]?.profileId, pinned = pinned)
         _sessionsChanged.tryEmit(Unit)

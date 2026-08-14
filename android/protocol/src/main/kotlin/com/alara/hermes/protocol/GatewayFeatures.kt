@@ -15,6 +15,10 @@ data class GatewayFeatures(
     val sessionConfig: Boolean,
     /** Interactive approval/clarify prompts arrive on this surface. */
     val approvals: Boolean,
+    /** Skills listing available. */
+    val skills: Boolean = false,
+    /** Cron automations available. */
+    val automations: Boolean = false,
 ) {
     companion object {
         /** Full dashboard gateway (`/api/ws` + REST, default port 9119). */
@@ -24,6 +28,8 @@ data class GatewayFeatures(
             sessionFlags = true,
             sessionConfig = true,
             approvals = true,
+            skills = true,
+            automations = true,
         )
 
         /** OpenAI-compatible API server (default port 8642): REST + SSE only. */

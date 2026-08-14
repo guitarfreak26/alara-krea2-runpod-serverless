@@ -97,9 +97,32 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             .thenByDescending { it.updatedAtMs },
     )
 
-    /** The list view honors the archived toggle; flags live on the server. */
-    fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> =
-        state.sessions.filter { it.archived == state.showArchived }
+    /**
+     * The list view honors the archived toggle. The server owns the archived
+     * flag, but this surface cannot LIST archived rows, so the archived view
+     * merges the local registry of sessions archived from this device.
+     */
+    fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> {
+        if (!state.showArchived) return state.sessions.filter { !it.archived }
+        val serverArchived = state.sessions.filter { it.archived }
+        val serverKeys = state.sessions.map { it.key }.toSet()
+        val registryOnly = archivedEntries.value
+            .filter { it.sessionKey !in serverKeys }
+            .map { entry ->
+                SessionSummary(
+                    key = entry.sessionKey,
+                    profileId = state.activeProfile ?: "default",
+                    title = entry.title,
+                    preview = "Archived from this device",
+                    updatedAtMs = entry.archivedAtMs,
+                    archived = true,
+                )
+            }
+        return (serverArchived + registryOnly).sortedByDescending { it.updatedAtMs }
+    }
+
+    private val archivedEntries = container.archivedRegistry.entries
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     fun toggleArchivedView() {
         _state.update { it.copy(showArchived = !it.showArchived) }
@@ -120,6 +143,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.setArchived(sessionKey, archived) }
+                .onSuccess {
+                    val title = _state.value.sessions.firstOrNull { it.key == sessionKey }?.title
+                        ?: archivedEntries.value.firstOrNull { it.sessionKey == sessionKey }?.title
+                        ?: "Conversation"
+                    if (archived) {
+                        container.archivedRegistry.add(sessionKey, title)
+                    } else {
+                        container.archivedRegistry.remove(sessionKey)
+                    }
+                }
                 .onFailure { t ->
                     _state.update { it.copy(notice = clean(t.message), features = gw.features) }
                 }
@@ -363,6 +396,33 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     /** Exception text can echo URLs/headers; never surface credentials. */
     private fun clean(message: String?): String = redact(message ?: "unknown error", secretToken)
+
+    suspend fun skills(): Result<List<com.alara.hermes.protocol.SkillInfo>> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.listSkills() }
+    }
+
+    suspend fun automations(): Result<List<com.alara.hermes.protocol.AutomationInfo>> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.listAutomations() }
+    }
+
+    suspend fun setAutomationPaused(id: String, paused: Boolean): Result<Unit> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.setAutomationPaused(id, paused) }
+    }
+
+    suspend fun runAutomation(id: String): Result<Unit> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.runAutomation(id) }
+    }
+
+    suspend fun deleteAutomation(id: String): Result<Unit> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.deleteAutomation(id) }
+    }
+
+    fun cleanError(message: String?): String = clean(message)
 
     fun dismissNotice() {
         _state.update { it.copy(notice = null) }

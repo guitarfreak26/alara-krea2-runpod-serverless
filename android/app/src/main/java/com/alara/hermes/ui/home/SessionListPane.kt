@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.SwipeToDismissBox
@@ -74,7 +74,7 @@ fun SessionListPane(
     onToggleArchivedView: () -> Unit,
     visibleSessions: List<com.alara.hermes.protocol.SessionSummary>,
     onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenOverlay: (String) -> Unit,
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
@@ -161,12 +161,33 @@ fun SessionListPane(
                     modifier = Modifier.clickable(onClick = onToggleArchivedView),
                 )
                 Spacer(Modifier.width(14.dp))
-                Icon(
-                    Icons.Filled.Settings,
-                    contentDescription = "Settings",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.clickable(onClick = onOpenSettings),
-                )
+                var menuOpen by remember { mutableStateOf(false) }
+                Box {
+                    Icon(
+                        Icons.Filled.MoreVert,
+                        contentDescription = "Menu",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable { menuOpen = true },
+                    )
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (state.features.skills) {
+                            DropdownMenuItem(text = { Text("Skills") }, onClick = {
+                                menuOpen = false
+                                onOpenOverlay("skills")
+                            })
+                        }
+                        if (state.features.automations) {
+                            DropdownMenuItem(text = { Text("Automations") }, onClick = {
+                                menuOpen = false
+                                onOpenOverlay("automations")
+                            })
+                        }
+                        DropdownMenuItem(text = { Text("Settings") }, onClick = {
+                            menuOpen = false
+                            onOpenOverlay("settings")
+                        })
+                    }
+                }
             }
 
             if (searchOpen) {

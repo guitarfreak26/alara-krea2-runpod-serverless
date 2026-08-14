@@ -6,7 +6,9 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -179,6 +181,54 @@ class HermesRestClient(
                 else -> ProfileInfo(name = row.toString().trim('"'))
             }
         }
+    }
+
+    suspend fun listSkills(): List<com.alara.hermes.protocol.SkillInfo> {
+        val element = json.parseToJsonElement(getRaw(url("api/skills")))
+        val rows = when (element) {
+            is JsonArray -> element
+            is JsonObject -> (element["skills"] ?: element["data"]) as? JsonArray ?: return emptyList()
+            else -> return emptyList()
+        }
+        return rows.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            val name = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: return@mapNotNull null
+            com.alara.hermes.protocol.SkillInfo(
+                name = name,
+                description = (obj["description"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+                category = (obj["category"] as? JsonPrimitive)?.contentOrNull.orEmpty(),
+            )
+        }
+    }
+
+    suspend fun listCronJobs(): List<com.alara.hermes.protocol.AutomationInfo> {
+        val element = json.parseToJsonElement(getRaw(url("api/cron/jobs")))
+        val rows = when (element) {
+            is JsonArray -> element
+            is JsonObject -> (element["jobs"] ?: element["data"]) as? JsonArray ?: return emptyList()
+            else -> return emptyList()
+        }
+        return rows.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            val id = str("id") ?: return@mapNotNull null
+            com.alara.hermes.protocol.AutomationInfo(
+                id = id,
+                name = str("name")?.takeIf { it.isNotBlank() } ?: id,
+                schedule = str("schedule_display") ?: str("schedule") ?: "",
+                prompt = str("prompt").orEmpty(),
+                enabled = str("enabled") != "false",
+                paused = str("state") == "paused" || obj["paused_at"] != null,
+            )
+        }
+    }
+
+    suspend fun cronJobAction(id: String, action: String) {
+        postRaw(url("api/cron/jobs", id, action), buildJsonObject { })
+    }
+
+    suspend fun deleteCronJob(id: String) {
+        execute(Request.Builder().url(url("api/cron/jobs", id)).authenticated().delete().build())
     }
 
     /** Mint a single-use, short-TTL WebSocket ticket using the current credential. */

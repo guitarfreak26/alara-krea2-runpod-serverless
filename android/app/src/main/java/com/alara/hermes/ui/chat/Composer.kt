@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -56,11 +57,48 @@ import kotlinx.coroutines.withContext
 
 private const val MAX_ATTACHMENTS = 4
 private const val MAX_ATTACHMENT_BYTES = 8L * 1024 * 1024
+private const val MAX_TEXT_FILE_BYTES = 384L * 1024
 
 private data class PendingAttachment(
     val uri: Uri,
     val attachment: OutgoingAttachment,
 )
+
+/** A readable text/code file embedded into the message body at send time. */
+private data class PendingTextFile(
+    val name: String,
+    val content: String,
+)
+
+private val TEXT_EXTENSIONS = setOf(
+    "txt", "md", "markdown", "json", "yaml", "yml", "toml", "csv", "tsv", "xml",
+    "html", "css", "js", "ts", "tsx", "jsx", "py", "kt", "kts", "java", "rs",
+    "go", "rb", "sh", "bash", "sql", "log", "ini", "cfg", "conf", "env",
+    "gradle", "properties", "diff", "patch", "srt", "vtt",
+)
+
+private fun looksTextual(name: String, mime: String?): Boolean {
+    if (mime != null && (mime.startsWith("text/") || mime == "application/json" ||
+            mime == "application/xml" || mime == "application/x-yaml")
+    ) {
+        return true
+    }
+    return name.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
+}
+
+/** Fence embedded files so the agent sees name + content unambiguously. */
+private fun embedTextFiles(text: String, files: List<PendingTextFile>): String {
+    if (files.isEmpty()) return text
+    return buildString {
+        files.forEach { file ->
+            append("File: ").append(file.name).append('\n')
+            append("```").append(file.name.substringAfterLast('.', "")).append('\n')
+            append(file.content.trimEnd('\n')).append('\n')
+            append("```").append('\n').append('\n')
+        }
+        append(text)
+    }
+}
 
 /**
  * Messaging composer with image attachments. Draft is restored per session
@@ -84,7 +122,55 @@ fun Composer(
     var text by rememberSaveable(sessionKey) { mutableStateOf("") }
     var draftLoaded by remember(sessionKey) { mutableStateOf(false) }
     val pending = remember(sessionKey) { mutableStateListOf<PendingAttachment>() }
+    val pendingText = remember(sessionKey) { mutableStateListOf<PendingTextFile>() }
     var attachmentError by remember { mutableStateOf<String?>(null) }
+    var attachMenuOpen by remember { mutableStateOf(false) }
+
+    val pickFiles = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments(),
+    ) { uris ->
+        scope.launch {
+            attachmentError = null
+            uris.forEach { uri ->
+                val mime = context.contentResolver.getType(uri)
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                            ?: return@runCatching null
+                        when {
+                            mime?.startsWith("image/") == true -> {
+                                if (bytes.size > MAX_ATTACHMENT_BYTES || pending.size >= MAX_ATTACHMENTS) {
+                                    null
+                                } else {
+                                    PendingAttachment(
+                                        uri,
+                                        OutgoingAttachment(name, mime, Base64.encodeToString(bytes, Base64.NO_WRAP)),
+                                    )
+                                }
+                            }
+                            looksTextual(name, mime) -> {
+                                if (bytes.size > MAX_TEXT_FILE_BYTES) {
+                                    null
+                                } else {
+                                    PendingTextFile(name, bytes.toString(Charsets.UTF_8))
+                                }
+                            }
+                            else -> "unsupported"
+                        }
+                    }.getOrNull()
+                }.let { loaded ->
+                    when (loaded) {
+                        is PendingAttachment -> pending += loaded
+                        is PendingTextFile -> pendingText += loaded
+                        "unsupported" -> attachmentError =
+                            "\"$name\" isn't supported — images and text/code files only on this surface"
+                        else -> attachmentError = "Skipped \"$name\" (unreadable or too large)"
+                    }
+                }
+            }
+        }
+    }
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MAX_ATTACHMENTS),
@@ -150,6 +236,49 @@ fun Composer(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
             )
         }
+        if (pendingText.isNotEmpty()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 2.dp),
+            ) {
+                pendingText.forEach { file ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .background(
+                                MaterialTheme.colorScheme.surfaceContainer,
+                                RoundedCornerShape(14.dp),
+                            )
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Icon(
+                            Icons.Filled.Description,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.padding(2.dp))
+                        Text(
+                            file.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Spacer(Modifier.padding(2.dp))
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Remove ${file.name}",
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clickable { pendingText.remove(file) },
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+        }
         if (pending.isNotEmpty()) {
             Row(
                 Modifier
@@ -193,21 +322,37 @@ fun Composer(
                 .fillMaxWidth()
                 .padding(horizontal = 6.dp, vertical = 8.dp),
         ) {
-            IconButton(
-                onClick = {
-                    if (pending.size < MAX_ATTACHMENTS) {
-                        pickImages.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
-                        )
-                    }
-                },
-                enabled = pending.size < MAX_ATTACHMENTS,
-            ) {
-                Icon(
-                    Icons.Filled.Add,
-                    contentDescription = "Attach image",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Box {
+                IconButton(onClick = { attachMenuOpen = true }) {
+                    Icon(
+                        Icons.Filled.Add,
+                        contentDescription = "Attach",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                androidx.compose.material3.DropdownMenu(
+                    expanded = attachMenuOpen,
+                    onDismissRequest = { attachMenuOpen = false },
+                ) {
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Photos") },
+                        onClick = {
+                            attachMenuOpen = false
+                            if (pending.size < MAX_ATTACHMENTS) {
+                                pickImages.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                )
+                            }
+                        },
+                    )
+                    androidx.compose.material3.DropdownMenuItem(
+                        text = { Text("Files") },
+                        onClick = {
+                            attachMenuOpen = false
+                            pickFiles.launch(arrayOf("*/*"))
+                        },
+                    )
+                }
             }
             BasicTextField(
                 value = text,
@@ -257,14 +402,15 @@ fun Composer(
             }
             FilledIconButton(
                 onClick = {
-                    val message = text.trim()
+                    val message = embedTextFiles(text.trim(), pendingText.toList())
                     if (message.isNotEmpty() || pending.isNotEmpty()) {
                         onSend(message, pending.map { it.attachment })
                         text = ""
                         pending.clear()
+                        pendingText.clear()
                     }
                 },
-                enabled = (text.isNotBlank() || pending.isNotEmpty()) && !sending,
+                enabled = (text.isNotBlank() || pending.isNotEmpty() || pendingText.isNotEmpty()) && !sending,
             ) {
                 Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
             }

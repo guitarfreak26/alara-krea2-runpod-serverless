@@ -123,6 +123,26 @@ data class ModelOption(
     val isCurrent: Boolean = false,
 )
 
+@Serializable
+data class SkillInfo(
+    val name: String,
+    val description: String = "",
+    val category: String = "",
+    val disabled: Boolean = false,
+)
+
+@Serializable
+data class AutomationInfo(
+    val id: String,
+    val name: String,
+    val schedule: String = "",
+    val prompt: String = "",
+    val enabled: Boolean = true,
+    val paused: Boolean = false,
+    val lastRunAtMs: Long? = null,
+    val lastStatus: String? = null,
+)
+
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState
