@@ -58,7 +58,12 @@ fun SettingsScreen(
 
     BackHandler(onBack = onBack)
 
-    Column(
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onBackground,
+    ) {
+        Column(
         Modifier
             .fillMaxSize()
             .statusBarsPadding()
@@ -141,6 +146,22 @@ fun SettingsScreen(
             )
 
             SectionDivider()
+            SectionLabel("Conversations")
+            val chatSettings by container.settings.chatSettings.collectAsState(initial = null)
+            SwitchRow(
+                title = "Active conversations first",
+                subtitle = "Pin running work to the top of the list",
+                checked = chatSettings?.activeFirst == true,
+                onChecked = { scope.launch { container.settings.setActiveFirst(it) } },
+            )
+            SwitchRow(
+                title = "Show tool activity",
+                subtitle = "Terminal, file and search steps inside conversations",
+                checked = chatSettings?.showToolActivity != false,
+                onChecked = { scope.launch { container.settings.setShowToolActivity(it) } },
+            )
+
+            SectionDivider()
             SectionLabel("Storage")
             SettingRow(
                 title = "Clear drafts",
@@ -172,6 +193,7 @@ fun SettingsScreen(
             SettingRow(title = "Hermes Mobile", subtitle = "Version $version")
         }
     }
+    }
 
     if (signOutConfirm) {
         AlertDialog(
@@ -192,6 +214,32 @@ fun SettingsScreen(
                 TextButton(onClick = { signOutConfirm = false }) { Text("Cancel") }
             },
         )
+    }
+}
+
+@Composable
+private fun SwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onChecked: (Boolean) -> Unit,
+) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onChecked(!checked) }
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 

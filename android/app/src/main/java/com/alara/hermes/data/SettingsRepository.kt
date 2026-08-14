@@ -29,6 +29,13 @@ data class AppearanceSettings(
     val themeMode: ThemeMode,
 )
 
+data class ChatSettings(
+    /** Running conversations sort to the top of the list (Codex-style). */
+    val activeFirst: Boolean,
+    /** Render tool-activity rows inside conversations. */
+    val showToolActivity: Boolean,
+)
+
 /**
  * App settings + credential storage. The gateway token is encrypted with a
  * Keystore-held AES key before persisting; everything else is plain preferences.
@@ -45,6 +52,8 @@ class SettingsRepository(
         val GatewayModeKey = stringPreferencesKey("gateway_mode")
         val ThemeMode = stringPreferencesKey("theme_mode")
         val Onboarded = booleanPreferencesKey("onboarded")
+        val ActiveFirst = booleanPreferencesKey("sessions_active_first")
+        val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -66,6 +75,21 @@ class SettingsRepository(
     }
 
     val onboarded: Flow<Boolean> = context.dataStore.data.map { it[Keys.Onboarded] ?: false }
+
+    val chatSettings: Flow<ChatSettings> = context.dataStore.data.map { prefs ->
+        ChatSettings(
+            activeFirst = prefs[Keys.ActiveFirst] ?: false,
+            showToolActivity = prefs[Keys.ShowToolActivity] ?: true,
+        )
+    }
+
+    suspend fun setActiveFirst(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.ActiveFirst] = enabled }
+    }
+
+    suspend fun setShowToolActivity(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.ShowToolActivity] = enabled }
+    }
 
     suspend fun currentServer(): ServerSettings = serverSettings.first()
 

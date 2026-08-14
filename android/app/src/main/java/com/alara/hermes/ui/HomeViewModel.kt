@@ -45,6 +45,8 @@ data class HomeUiState(
     val chat: ChatUiState = ChatUiState(),
     val models: List<ModelOption> = emptyList(),
     val notice: String? = null,
+    val chatSettings: com.alara.hermes.data.ChatSettings =
+        com.alara.hermes.data.ChatSettings(activeFirst = false, showToolActivity = true),
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -75,7 +77,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     init {
         viewModelScope.launch { bootstrap() }
+        viewModelScope.launch {
+            container.settings.chatSettings.collect { prefs ->
+                _state.update { it.copy(chatSettings = prefs, sessions = sortSessions(it.sessions, prefs)) }
+            }
+        }
     }
+
+    private fun sortSessions(
+        sessions: List<SessionSummary>,
+        prefs: com.alara.hermes.data.ChatSettings = _state.value.chatSettings,
+    ): List<SessionSummary> = sessions.sortedWith(
+        compareByDescending<SessionSummary> { prefs.activeFirst && it.running }
+            .thenByDescending { it.pinned }
+            .thenByDescending { it.updatedAtMs },
+    )
 
     private suspend fun bootstrap() {
         val server = container.settings.currentServer()
@@ -133,10 +149,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 if (query.isBlank()) gw.listSessions(profile) else gw.searchSessions(query, profile)
             }
             result.onSuccess { sessions ->
-                val sorted = sessions.sortedWith(
-                    compareByDescending<SessionSummary> { it.pinned }.thenByDescending { it.updatedAtMs },
-                )
-                _state.update { it.copy(sessions = sorted, sessionsLoading = false) }
+                _state.update { it.copy(sessions = sortSessions(sessions), sessionsLoading = false) }
             }.onFailure {
                 _state.update { it.copy(sessionsLoading = false) }
             }

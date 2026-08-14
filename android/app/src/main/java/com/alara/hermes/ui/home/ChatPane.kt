@@ -110,7 +110,11 @@ fun ChatPane(
     // reverseLayout: index 0 sits at the bottom, so opening a conversation
     // starts at the newest message, streaming growth stays anchored, and the
     // keyboard never pushes content out from under the reader.
-    val rows = remember(entries) { buildTranscriptRows(entries).asReversed() }
+    val showTools = state.chatSettings.showToolActivity
+    val rows = remember(entries, showTools) {
+        val visible = if (showTools) entries else entries.filterNot { it is ChatEntry.ToolRun }
+        buildTranscriptRows(visible).asReversed()
+    }
 
     val pinnedToBottom by remember {
         derivedStateOf {
@@ -140,7 +144,7 @@ fun ChatPane(
                 state = listState,
                 reverseLayout = true,
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
+                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp, Alignment.Bottom),
             ) {
                 chat.timeline?.statusText?.let { status ->
