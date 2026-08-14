@@ -109,7 +109,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.setPinned(sessionKey, pinned) }
-                .onFailure { t -> _state.update { it.copy(notice = clean("Pin failed: ${t.message}")) } }
+                .onFailure { t ->
+                    _state.update { it.copy(notice = clean(t.message), features = gw.features) }
+                }
             refreshSessions(silent = true)
         }
     }
@@ -118,7 +120,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.setArchived(sessionKey, archived) }
-                .onFailure { t -> _state.update { it.copy(notice = clean("Archive failed: ${t.message}")) } }
+                .onFailure { t ->
+                    _state.update { it.copy(notice = clean(t.message), features = gw.features) }
+                }
             refreshSessions(silent = true)
         }
     }

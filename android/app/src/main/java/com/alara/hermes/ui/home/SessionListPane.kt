@@ -210,6 +210,7 @@ fun SessionListPane(
                             SwipeableSessionRow(
                                 session = session,
                                 selected = session.key == state.chat.sessionKey,
+                                gesturesEnabled = state.features.sessionFlags,
                                 onClick = { onOpenSession(session.key) },
                                 onLongClick = { contextSession = session },
                                 onPin = { onPin(session.key, !session.pinned) },
@@ -244,7 +245,7 @@ fun SessionListPane(
                     overflow = TextOverflow.Ellipsis,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                if (state.features.rename) {
+                if (state.features.sessionFlags) {
                     SheetAction(if (session.pinned) "Unpin" else "Pin") {
                         onPin(session.key, !session.pinned)
                         contextSession = null
@@ -253,6 +254,8 @@ fun SessionListPane(
                         onArchive(session.key, !session.archived)
                         contextSession = null
                     }
+                }
+                if (state.features.rename) {
                     SheetAction("Rename") {
                         renameTarget = session
                         contextSession = null
@@ -335,6 +338,7 @@ private fun ConnectionDot(connection: com.alara.hermes.protocol.ConnectionState)
 private fun SwipeableSessionRow(
     session: SessionSummary,
     selected: Boolean,
+    gesturesEnabled: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPin: () -> Unit,
@@ -354,6 +358,8 @@ private fun SwipeableSessionRow(
     )
     SwipeToDismissBox(
         state = dismissState,
+        enableDismissFromStartToEnd = gesturesEnabled,
+        enableDismissFromEndToStart = gesturesEnabled,
         backgroundContent = {
             val target = dismissState.dismissDirection
             Row(

@@ -104,9 +104,13 @@ class ApiServerGateway(
 
     @Volatile private var capabilities: ServerCapabilities? = null
 
+    /** Set when PATCH rejects pinned/archived: the server build predates flag sync. */
+    @Volatile private var sessionFlagsRejected = false
+
     override val features: GatewayFeatures
         get() = GatewayFeatures.API_SERVER.copy(
             rename = capabilities?.sessionUpdate == true,
+            sessionFlags = capabilities?.sessionUpdate == true && !sessionFlagsRejected,
             // Structured approvals exist only on the /v1/runs stream.
             approvals = capabilities?.runSubmission == true,
             // Thinking/fast ride each request as model_options overrides.
@@ -174,6 +178,9 @@ class ApiServerGateway(
             model = (caps?.get("model") as? JsonPrimitive)?.contentOrNull,
         )
         capabilities = parsed
+        // A fresh capability probe re-tests flag support: after the VPS updates
+        // hermes-agent, pin/archive re-enable on the next reconnect.
+        sessionFlagsRejected = false
         val label = parsed.model?.let { "connected ($it)" } ?: "connected"
         _connection.value = ConnectionState.Connected(label)
         label
@@ -340,6 +347,20 @@ class ApiServerGateway(
                     .patch(body.toString().toRequestBody(jsonMedia)).build(),
             ).execute().use { response ->
                 if (!response.isSuccessful) {
+                    val detail = response.body?.string().orEmpty()
+                    // Older hermes-agent builds allow only {title, end_reason}
+                    // here and 400 on pinned/archived. Degrade once, loudly.
+                    if (response.code == 400 &&
+                        (body.containsKey("pinned") || body.containsKey("archived")) &&
+                        (detail.contains("unsupported_session_field") ||
+                            detail.contains("Unsupported session fields"))
+                    ) {
+                        sessionFlagsRejected = true
+                        throw HermesRpcException(
+                            "This Hermes build doesn't sync pin/archive yet — " +
+                                "update hermes-agent on the VPS to enable it",
+                        )
+                    }
                     throw HermesHttpException(response.code, "$action failed: HTTP ${response.code}")
                 }
             }

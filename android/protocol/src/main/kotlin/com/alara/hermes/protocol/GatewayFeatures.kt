@@ -9,6 +9,8 @@ data class GatewayFeatures(
     val profiles: Boolean,
     /** Session rename supported. */
     val rename: Boolean,
+    /** Durable pinned/archived flags supported (recent hermes-agent builds). */
+    val sessionFlags: Boolean = false,
     /** Per-session reasoning level + fast mode (config.set). */
     val sessionConfig: Boolean,
     /** Interactive approval/clarify prompts arrive on this surface. */
@@ -19,6 +21,7 @@ data class GatewayFeatures(
         val DASHBOARD = GatewayFeatures(
             profiles = true,
             rename = true,
+            sessionFlags = true,
             sessionConfig = true,
             approvals = true,
         )
