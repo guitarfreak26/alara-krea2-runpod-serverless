@@ -1,0 +1,130 @@
+package com.alara.hermes.ui.chat
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
+import com.alara.hermes.protocol.ChatEntry
+import com.alara.hermes.protocol.Role
+import com.mikepenz.markdown.m3.Markdown
+
+/**
+ * Chat bubble. User turns get a tinted right-aligned bubble; assistant turns
+ * render as full-width markdown on the AMOLED ground, iMessage/ChatGPT hybrid.
+ */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
+fun MessageBubble(entry: ChatEntry.Message) {
+    val context = LocalContext.current
+    var actionsOpen by remember { mutableStateOf(false) }
+
+    when (entry.role) {
+        Role.USER -> {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End) {
+                Box(
+                    Modifier
+                        .widthIn(max = 560.dp)
+                        .background(
+                            com.alara.hermes.ui.theme.HermesColors.BubbleOutgoing,
+                            RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 18.dp, bottomEnd = 6.dp),
+                        )
+                        .combinedClickable(onClick = {}, onLongClick = { actionsOpen = true })
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        entry.text,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                    )
+                }
+            }
+        }
+        Role.ASSISTANT -> {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(onClick = {}, onLongClick = { actionsOpen = true }),
+            ) {
+                Column {
+                    Markdown(
+                        content = entry.text.ifEmpty { if (entry.streaming) "…" else "" },
+                    )
+                    if (entry.streaming && entry.text.isNotEmpty()) {
+                        Text(
+                            "▍",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+            }
+        }
+        Role.SYSTEM -> {
+            Text(
+                entry.text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp),
+            )
+        }
+    }
+
+    if (actionsOpen) {
+        ModalBottomSheet(onDismissRequest = { actionsOpen = false }) {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                MessageAction("Copy") {
+                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboard.setPrimaryClip(ClipData.newPlainText("Hermes message", entry.text))
+                    actionsOpen = false
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                MessageAction("Share") {
+                    val intent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TEXT, entry.text)
+                    }
+                    context.startActivity(Intent.createChooser(intent, "Share message"))
+                    actionsOpen = false
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageAction(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.bodyLarge,
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+    )
+}
