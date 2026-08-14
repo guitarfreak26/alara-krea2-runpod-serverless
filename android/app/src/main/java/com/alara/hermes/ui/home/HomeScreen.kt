@@ -1,25 +1,50 @@
 package com.alara.hermes.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.DataUsage
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationDrawerItem
+import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
+import com.alara.hermes.ui.HomeUiState
 import kotlinx.coroutines.launch
 
 /**
  * Root adaptive layout:
  * - compact width (phone / Fold cover): single pane, list OR conversation
  * - expanded width (unfolded Fold / tablet / landscape): list + detail side by side
+ * The hamburger drawer slides over either layout; it never displaces the
+ * sessions + conversation panes.
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
@@ -32,6 +57,7 @@ fun HomeScreen(
     val navigator = rememberListDetailPaneScaffoldNavigator<String>()
     val scope = rememberCoroutineScope()
     val snackbar = SnackbarHostState()
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
 
     LaunchedEffect(state.notice) {
         state.notice?.let {
@@ -40,12 +66,16 @@ fun HomeScreen(
         }
     }
 
-    BackHandler(enabled = navigator.canNavigateBack()) {
+    BackHandler(enabled = drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+
+    BackHandler(enabled = !drawerState.isOpen && navigator.canNavigateBack()) {
         scope.launch { navigator.navigateBack() }
     }
 
     // Back in the archived view returns to active conversations, not out of the app.
-    BackHandler(enabled = state.showArchived && !navigator.canNavigateBack()) {
+    BackHandler(enabled = !drawerState.isOpen && state.showArchived && !navigator.canNavigateBack()) {
         viewModel.toggleArchivedView()
     }
 
@@ -60,45 +90,102 @@ fun HomeScreen(
         }
     }
 
-    Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
-        NavigableListDetailPaneScaffold(
-            navigator = navigator,
-            listPane = {
-                AnimatedPane {
-                    SessionListPane(
-                        state = state,
-                        onOpenSession = { key ->
-                            viewModel.openSession(key)
-                            scope.launch {
-                                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key ?: "new")
-                            }
-                        },
-                        onSwitchProfile = viewModel::switchProfile,
-                        onSearch = viewModel::setSearchQuery,
-                        onRename = viewModel::renameSession,
-                        onDelete = viewModel::deleteSession,
-                        onPin = viewModel::setPinned,
-                        onArchive = viewModel::setArchived,
-                        onToggleArchivedView = viewModel::toggleArchivedView,
-                        visibleSessions = viewModel.visibleSessions(state),
-                        onRefresh = { viewModel.refreshSessions() },
-                        onOpenOverlay = onOpenOverlay,
-                    )
-                }
-            },
-            detailPane = {
-                AnimatedPane {
-                    ChatPane(
-                        state = state,
-                        viewModel = viewModel,
-                        onBack = if (navigator.canNavigateBack()) {
-                            { scope.launch { navigator.navigateBack() } }
-                        } else {
-                            null
-                        },
-                    )
-                }
-            },
-        )
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        // Session rows own horizontal swipes (pin/archive), so the drawer
+        // opens from the hamburger only; swipe/scrim still close it.
+        gesturesEnabled = drawerState.isOpen,
+        drawerContent = {
+            HomeDrawer(
+                state = state,
+                onNavigate = { route ->
+                    scope.launch { drawerState.close() }
+                    onOpenOverlay(route)
+                },
+            )
+        },
+    ) {
+        Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
+            NavigableListDetailPaneScaffold(
+                navigator = navigator,
+                listPane = {
+                    AnimatedPane {
+                        SessionListPane(
+                            state = state,
+                            onOpenSession = { key ->
+                                viewModel.openSession(key)
+                                scope.launch {
+                                    navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key ?: "new")
+                                }
+                            },
+                            onSwitchProfile = viewModel::switchProfile,
+                            onSearch = viewModel::setSearchQuery,
+                            onRename = viewModel::renameSession,
+                            onDelete = viewModel::deleteSession,
+                            onPin = viewModel::setPinned,
+                            onArchive = viewModel::setArchived,
+                            onToggleArchivedView = viewModel::toggleArchivedView,
+                            visibleSessions = viewModel.visibleSessions(state),
+                            onRefresh = { viewModel.refreshSessions() },
+                            onOpenMenu = { scope.launch { drawerState.open() } },
+                        )
+                    }
+                },
+                detailPane = {
+                    AnimatedPane {
+                        ChatPane(
+                            state = state,
+                            viewModel = viewModel,
+                            onBack = if (navigator.canNavigateBack()) {
+                                { scope.launch { navigator.navigateBack() } }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                },
+            )
+        }
     }
+}
+
+@Composable
+private fun HomeDrawer(
+    state: HomeUiState,
+    onNavigate: (String) -> Unit,
+) {
+    ModalDrawerSheet(
+        drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        drawerContentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        Text(
+            "Hermes",
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(horizontal = 28.dp, vertical = 20.dp),
+        )
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(12.dp))
+        if (state.features.skills) {
+            DrawerItem("Skills", Icons.Outlined.AutoAwesome) { onNavigate("skills") }
+        }
+        if (state.features.automations) {
+            DrawerItem("Automations", Icons.Outlined.Schedule) { onNavigate("automations") }
+        }
+        DrawerItem("Usage", Icons.Outlined.DataUsage) { onNavigate("usage") }
+        Spacer(Modifier.height(12.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(12.dp))
+        DrawerItem("Settings", Icons.Filled.Settings) { onNavigate("settings") }
+    }
+}
+
+@Composable
+private fun DrawerItem(label: String, icon: ImageVector, onClick: () -> Unit) {
+    NavigationDrawerItem(
+        label = { Text(label) },
+        icon = { Icon(icon, contentDescription = null) },
+        selected = false,
+        onClick = onClick,
+        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
+    )
 }

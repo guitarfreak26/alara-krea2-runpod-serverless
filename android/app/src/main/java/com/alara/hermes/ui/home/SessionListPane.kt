@@ -26,7 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.SwipeToDismissBox
@@ -74,7 +74,7 @@ fun SessionListPane(
     onToggleArchivedView: () -> Unit,
     visibleSessions: List<com.alara.hermes.protocol.SessionSummary>,
     onRefresh: () -> Unit,
-    onOpenOverlay: (String) -> Unit,
+    onOpenMenu: () -> Unit,
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
@@ -95,6 +95,15 @@ fun SessionListPane(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                Icon(
+                    Icons.Filled.Menu,
+                    contentDescription = "Menu",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable(onClick = onOpenMenu)
+                        .padding(vertical = 4.dp),
+                )
+                Spacer(Modifier.width(16.dp))
                 val canSwitchProfile = state.features.profiles && state.profiles.isNotEmpty()
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -160,38 +169,6 @@ fun SessionListPane(
                     },
                     modifier = Modifier.clickable(onClick = onToggleArchivedView),
                 )
-                Spacer(Modifier.width(14.dp))
-                var menuOpen by remember { mutableStateOf(false) }
-                Box {
-                    Icon(
-                        Icons.Filled.MoreVert,
-                        contentDescription = "Menu",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.clickable { menuOpen = true },
-                    )
-                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        if (state.features.skills) {
-                            DropdownMenuItem(text = { Text("Skills") }, onClick = {
-                                menuOpen = false
-                                onOpenOverlay("skills")
-                            })
-                        }
-                        if (state.features.automations) {
-                            DropdownMenuItem(text = { Text("Automations") }, onClick = {
-                                menuOpen = false
-                                onOpenOverlay("automations")
-                            })
-                        }
-                        DropdownMenuItem(text = { Text("Usage") }, onClick = {
-                            menuOpen = false
-                            onOpenOverlay("usage")
-                        })
-                        DropdownMenuItem(text = { Text("Settings") }, onClick = {
-                            menuOpen = false
-                            onOpenOverlay("settings")
-                        })
-                    }
-                }
             }
 
             if (searchOpen) {
