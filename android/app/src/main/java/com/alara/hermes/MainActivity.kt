@@ -95,6 +95,7 @@ private fun OnboardingFlow(container: AppContainer) {
 @Composable
 private fun MainFlow(container: AppContainer) {
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
+    var settingsOpen by remember { mutableStateOf(false) }
 
     // Reconcile with the backend every time the app returns to the foreground.
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -106,5 +107,14 @@ private fun MainFlow(container: AppContainer) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    HomeScreen(viewModel)
+    if (settingsOpen) {
+        val connection by viewModel.state.collectAsState()
+        com.alara.hermes.ui.settings.SettingsScreen(
+            container = container,
+            connection = connection.connection,
+            onBack = { settingsOpen = false },
+        )
+    } else {
+        HomeScreen(viewModel, onOpenSettings = { settingsOpen = true })
+    }
 }

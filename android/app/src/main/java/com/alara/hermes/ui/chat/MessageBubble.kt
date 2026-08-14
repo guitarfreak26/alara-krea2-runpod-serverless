@@ -44,7 +44,13 @@ fun MessageBubble(entry: ChatEntry.Message) {
 
     when (entry.role) {
         Role.USER -> {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End) {
+            // Never span the full width: outgoing bubbles read as "mine".
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = 48.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.End,
+            ) {
                 Box(
                     Modifier
                         .widthIn(max = 560.dp)

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -36,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -62,6 +65,7 @@ fun SessionListPane(
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
     onRefresh: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
@@ -70,7 +74,11 @@ fun SessionListPane(
     var deleteTarget by remember { mutableStateOf<SessionSummary?>(null) }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding(),
+        ) {
             // Header: profile switcher + connection + search toggle
             Row(
                 modifier = Modifier
@@ -121,7 +129,7 @@ fun SessionListPane(
                 }
                 Spacer(Modifier.weight(1f))
                 ConnectionDot(state.connection)
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
                 Icon(
                     Icons.Filled.Search,
                     contentDescription = "Search",
@@ -131,6 +139,13 @@ fun SessionListPane(
                             searchOpen = !searchOpen
                             if (!searchOpen) onSearch("")
                         },
+                )
+                Spacer(Modifier.width(14.dp))
+                Icon(
+                    Icons.Filled.Settings,
+                    contentDescription = "Settings",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.clickable(onClick = onOpenSettings),
                 )
             }
 
@@ -161,14 +176,20 @@ fun SessionListPane(
                     )
                 }
             } else {
-                LazyColumn(Modifier.fillMaxSize()) {
-                    items(state.sessions, key = { it.key }) { session ->
-                        SessionRow(
-                            session = session,
-                            selected = session.key == state.chat.sessionKey,
-                            onClick = { onOpenSession(session.key) },
-                            onLongClick = { contextSession = session },
-                        )
+                PullToRefreshBox(
+                    isRefreshing = state.sessionsLoading,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    LazyColumn(Modifier.fillMaxSize()) {
+                        items(state.sessions, key = { it.key }) { session ->
+                            SessionRow(
+                                session = session,
+                                selected = session.key == state.chat.sessionKey,
+                                onClick = { onOpenSession(session.key) },
+                                onLongClick = { contextSession = session },
+                            )
+                        }
                     }
                 }
             }

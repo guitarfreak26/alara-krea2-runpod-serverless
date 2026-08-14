@@ -23,7 +23,10 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3AdaptiveApi::class)
 @Composable
-fun HomeScreen(viewModel: com.alara.hermes.ui.HomeViewModel) {
+fun HomeScreen(
+    viewModel: com.alara.hermes.ui.HomeViewModel,
+    onOpenSettings: () -> Unit,
+) {
     val state by viewModel.state.collectAsState()
     val navigator = rememberListDetailPaneScaffoldNavigator<String>()
     val scope = rememberCoroutineScope()
@@ -58,6 +61,7 @@ fun HomeScreen(viewModel: com.alara.hermes.ui.HomeViewModel) {
                         onRename = viewModel::renameSession,
                         onDelete = viewModel::deleteSession,
                         onRefresh = { viewModel.refreshSessions() },
+                        onOpenSettings = onOpenSettings,
                     )
                 }
             },
