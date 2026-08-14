@@ -163,7 +163,11 @@ class HermesLiveGateway(
         }
 
     override suspend fun listSessions(profileId: String?): List<SessionSummary> =
-        rest.listSessions(profileId, archived = "include").mapNotNull { it.toSummary(profileId) }
+        rest.listSessions(profileId, archived = "exclude").mapNotNull { it.toSummary(profileId) }
+
+    override suspend fun listArchivedSessions(profileId: String?): List<SessionSummary> =
+        rest.listSessions(profileId, archived = "only")
+            .mapNotNull { it.toSummary(profileId)?.copy(archived = true) }
 
     override suspend fun searchSessions(query: String, profileId: String?): List<SessionSummary> =
         rest.searchSessions(query, profileId).mapNotNull { it.toSummary(profileId) }

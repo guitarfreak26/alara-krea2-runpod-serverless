@@ -99,6 +99,8 @@ class ApiServerGateway(
         val runSubmission: Boolean = false,
         /** POST /api/sessions/{id}/chat/stream — server-side history, no transcript resend. */
         val sessionChatStreaming: Boolean = false,
+        /** GET /api/sessions accepts `archived=exclude|only|include`. */
+        val archivedListing: Boolean = false,
         val skillsApi: Boolean? = null,
         val jobsAvailable: Boolean? = null,
         val model: String? = null,
@@ -117,6 +119,7 @@ class ApiServerGateway(
             approvals = capabilities?.runSubmission == true,
             // Thinking/fast ride each request as model_options overrides.
             sessionConfig = true,
+            archivedListing = capabilities?.archivedListing == true,
             skills = capabilities?.skillsApi != false,
             automations = capabilities?.jobsAvailable != false,
         )
@@ -179,6 +182,8 @@ class ApiServerGateway(
                 ?: (endpoints?.get("runs") != null),
             sessionChatStreaming = (features?.get("session_chat_streaming") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
+            archivedListing = (features?.get("session_archived_listing") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull() == true,
             skillsApi = (features?.get("skills_api") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
             // jobs_admin=false means CRUD is locked down; listing may still work,
@@ -222,7 +227,29 @@ class ApiServerGateway(
         // Session resources are optional on this surface; only call the
         // endpoint when the deployment advertises it via /v1/capabilities.
         if (capabilities?.sessionResources != true) return locallyKnownSessions()
-        val rows = dataRows(getJson(url("api/sessions")))
+        // Older builds hardcode include_archived=False and reject unknown
+        // params; only send the filter when the capability is advertised.
+        val target = if (capabilities?.archivedListing == true) {
+            url("api/sessions").newBuilder().addQueryParameter("archived", "exclude").build()
+        } else {
+            url("api/sessions")
+        }
+        return mapSessionRows(dataRows(getJson(target)))
+    }
+
+    override suspend fun listArchivedSessions(profileId: String?): List<SessionSummary> {
+        if (capabilities == null) connect()
+        if (capabilities?.archivedListing != true) {
+            throw HermesRpcException("This Hermes build doesn't support archived listing")
+        }
+        val target = url("api/sessions").newBuilder()
+            .addQueryParameter("archived", "only").build()
+        // Rows served from the archived filter are archived by definition even
+        // if the row payload omits the flag.
+        return mapSessionRows(dataRows(getJson(target))).map { it.copy(archived = true) }
+    }
+
+    private fun mapSessionRows(rows: JsonArray): List<SessionSummary> {
         return rows.mapNotNull { row ->
             val session = runCatching {
                 json.decodeFromJsonElement(StoredSession.serializer(), row)

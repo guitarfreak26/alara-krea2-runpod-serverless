@@ -36,10 +36,16 @@ class ApiServerGatewayTest {
         server.shutdown()
     }
 
-    private fun capabilitiesBody(sessionResources: Boolean = true, sessionUpdate: Boolean = true) = buildString {
+    private fun capabilitiesBody(
+        sessionResources: Boolean = true,
+        sessionUpdate: Boolean = true,
+        archivedListing: Boolean = false,
+    ) = buildString {
         append("""{"object":"hermes.api_server.capabilities","platform":"hermes-agent","model":"hermes-4",""")
         append(""""auth":{"type":"bearer","required":true},""")
-        append(""""features":{"chat_completions":true,"session_resources":$sessionResources},""")
+        append(""""features":{"chat_completions":true,"session_resources":$sessionResources""")
+        if (archivedListing) append(""","session_archived_listing":true""")
+        append("},")
         append(""""endpoints":{"chat_completions":{"method":"POST","path":"/v1/chat/completions"}""")
         if (sessionResources) append(""","sessions":{"method":"GET","path":"/api/sessions"}""")
         if (sessionUpdate) append(""","session_update":{"method":"PATCH","path":"/api/sessions/{session_id}"}""")
@@ -222,6 +228,48 @@ class ApiServerGatewayTest {
         val models = gateway.listModels(null)
         assertEquals(listOf("hermes-agent"), models.map { it.id })
         assertTrue(models.none { it.isCurrent })
+    }
+
+    @Test
+    fun `archived listing capability filters the main list and serves the archived view`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody(archivedListing = true)))
+        gateway.testConnection().getOrThrow()
+        assertTrue(gateway.features.archivedListing)
+        server.takeRequest() // capabilities
+
+        server.enqueue(
+            MockResponse().setBody("""{"data":[{"id":"s1","title":"live","started_at":1.0}]}"""),
+        )
+        val active = gateway.listSessions(null)
+        assertEquals("/api/sessions?archived=exclude", server.takeRequest().path)
+        assertEquals(listOf("s1"), active.map { it.key })
+
+        server.enqueue(
+            MockResponse().setBody("""{"data":[{"id":"s9","title":"desktop archived","started_at":2.0}]}"""),
+        )
+        val archived = gateway.listArchivedSessions(null)
+        assertEquals("/api/sessions?archived=only", server.takeRequest().path)
+        // Rows from the archived filter carry the flag even when the payload omits it.
+        assertEquals(listOf("s9"), archived.map { it.key })
+        assertTrue(archived.all { it.archived })
+    }
+
+    @Test
+    fun `archived listing degrades on older builds`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        gateway.testConnection().getOrThrow()
+        assertTrue(!gateway.features.archivedListing)
+        server.takeRequest() // capabilities
+
+        // Main list must not send the filter param an old build would reject.
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        gateway.listSessions(null)
+        assertEquals("/api/sessions", server.takeRequest().path)
+
+        // Archived listing fails loudly instead of returning a wrong list.
+        val result = runCatching { gateway.listArchivedSessions(null) }
+        assertTrue(result.isFailure)
+        assertEquals(2, server.requestCount) // no extra HTTP call was made
     }
 
     @Test

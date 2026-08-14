@@ -101,6 +101,12 @@ implements it as the app's primary connection path:
   `DELETE /api/sessions/{id}` (404 = already gone), and `session_update`
   enables rename via `PATCH /api/sessions/{id}`. Deployments without those
   endpoints fall back to a local view of app-opened sessions.
+  `features.session_archived_listing` means `GET /api/sessions` accepts
+  `archived=exclude|only|include`; the client then uses `archived=only` as
+  the durable archived list (desktop-archived rows included) and
+  `archived=exclude` for the main list. Without it, no `archived` param is
+  sent (old builds hardcode include_archived=False) and the archived view
+  falls back to the on-device registry of sessions archived from this phone.
 - **Chat**: `POST /v1/chat/completions` `{model, messages, stream:true}` with
   `X-Hermes-Session-Id` session continuity (api_server.py:4168-4175); SSE
   deltas at `choices[0].delta.content`, tool activity as

@@ -98,12 +98,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     )
 
     /**
-     * The list view honors the archived toggle. The server owns the archived
-     * flag, but this surface cannot LIST archived rows, so the archived view
-     * merges the local registry of sessions archived from this device.
+     * The list view honors the archived toggle. When the server supports
+     * archived listing, `archived=only` is the durable archived list — it
+     * includes sessions archived from desktop. Only older builds fall back to
+     * merging the local registry of sessions archived from this device.
      */
     fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> {
         if (!state.showArchived) return state.sessions.filter { !it.archived }
+        if (state.features.archivedListing) return state.sessions.filter { it.archived }
         val serverArchived = state.sessions.filter { it.archived }
         val serverKeys = state.sessions.map { it.key }.toSet()
         val registryOnly = archivedEntries.value
@@ -126,6 +128,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     fun toggleArchivedView() {
         _state.update { it.copy(showArchived = !it.showArchived) }
+        // The archived view is its own server query (`archived=only`), so the
+        // list must be re-fetched on every toggle when the server supports it.
+        if (_state.value.features.archivedListing) refreshSessions()
     }
 
     fun setPinned(sessionKey: String, pinned: Boolean) {
@@ -226,7 +231,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             val profile = _state.value.activeProfile
             val query = _state.value.searchQuery
             val result = runCatching {
-                if (query.isBlank()) gw.listSessions(profile) else gw.searchSessions(query, profile)
+                when {
+                    query.isNotBlank() -> gw.searchSessions(query, profile)
+                    _state.value.showArchived && gw.features.archivedListing ->
+                        gw.listArchivedSessions(profile)
+                    else -> gw.listSessions(profile)
+                }
             }
             result.onSuccess { sessions ->
                 _state.update { it.copy(sessions = sortSessions(sessions), sessionsLoading = false) }

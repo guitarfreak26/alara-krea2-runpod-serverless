@@ -56,6 +56,13 @@ interface HermesGateway {
 
     suspend fun listProfiles(): List<HermesProfile>
     suspend fun listSessions(profileId: String?): List<SessionSummary>
+
+    /**
+     * Durable archived list from the server (`archived=only`). Only valid when
+     * [GatewayFeatures.archivedListing] is set; throws otherwise.
+     */
+    suspend fun listArchivedSessions(profileId: String?): List<SessionSummary>
+
     suspend fun searchSessions(query: String, profileId: String?): List<SessionSummary>
     suspend fun listModels(sessionKey: String?): List<ModelOption>
 

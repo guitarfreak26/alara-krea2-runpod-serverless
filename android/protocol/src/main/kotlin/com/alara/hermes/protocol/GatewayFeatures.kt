@@ -11,6 +11,8 @@ data class GatewayFeatures(
     val rename: Boolean,
     /** Durable pinned/archived flags supported (recent hermes-agent builds). */
     val sessionFlags: Boolean = false,
+    /** Server can filter session lists by archived state (`archived=exclude|only|include`). */
+    val archivedListing: Boolean = false,
     /** Per-session reasoning level + fast mode (config.set). */
     val sessionConfig: Boolean,
     /** Interactive approval/clarify prompts arrive on this surface. */
@@ -26,6 +28,7 @@ data class GatewayFeatures(
             profiles = true,
             rename = true,
             sessionFlags = true,
+            archivedListing = true,
             sessionConfig = true,
             approvals = true,
             skills = true,
