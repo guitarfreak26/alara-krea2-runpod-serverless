@@ -2,6 +2,8 @@ package com.alara.hermes.ui.home
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.outlined.Archive
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.SwipeToDismissBox
@@ -37,6 +40,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -75,9 +79,12 @@ fun SessionListPane(
     visibleSessions: List<com.alara.hermes.protocol.SessionSummary>,
     onRefresh: () -> Unit,
     onOpenMenu: () -> Unit,
+    sourceOptions: List<String> = emptyList(),
+    onToggleSource: (String) -> Unit = {},
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var filtersOpen by rememberSaveable { mutableStateOf(false) }
     var contextSession by remember { mutableStateOf<SessionSummary?>(null) }
     var renameTarget by remember { mutableStateOf<SessionSummary?>(null) }
     var deleteTarget by remember { mutableStateOf<SessionSummary?>(null) }
@@ -160,6 +167,17 @@ fun SessionListPane(
                 )
                 Spacer(Modifier.width(14.dp))
                 Icon(
+                    Icons.Filled.FilterList,
+                    contentDescription = "Filter groups",
+                    tint = if (filtersOpen || state.hiddenSources.isNotEmpty()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.clickable { filtersOpen = !filtersOpen },
+                )
+                Spacer(Modifier.width(14.dp))
+                Icon(
                     if (state.showArchived) Icons.Filled.Unarchive else Icons.Outlined.Archive,
                     contentDescription = if (state.showArchived) "Show active" else "Show archived",
                     tint = if (state.showArchived) {
@@ -184,6 +202,27 @@ fun SessionListPane(
                 )
             }
 
+            // Source-group filter: chips stay selected while visible; unselect
+            // to hide that group (cron, matrix, discord, …) from the list.
+            if (filtersOpen && sourceOptions.isNotEmpty()) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp)
+                        .padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    sourceOptions.forEach { source ->
+                        FilterChip(
+                            selected = source !in state.hiddenSources,
+                            onClick = { onToggleSource(source) },
+                            label = { Text(source) },
+                        )
+                    }
+                }
+            }
+
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
             if (state.sessionsLoading && visibleSessions.isEmpty()) {
@@ -194,6 +233,8 @@ fun SessionListPane(
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
                         when {
+                            state.hiddenSources.isNotEmpty() && state.searchQuery.isBlank() ->
+                                "Nothing here — some groups are filtered out"
                             state.showArchived -> "No archived conversations"
                             state.searchQuery.isBlank() -> "No conversations yet"
                             else -> "No matches"

@@ -51,6 +51,8 @@ data class HomeUiState(
     val showArchived: Boolean = false,
     val chatSettings: com.alara.hermes.data.ChatSettings =
         com.alara.hermes.data.ChatSettings(activeFirst = false, showToolActivity = true),
+    /** Source groups (cron, matrix, discord, …) the user filtered out of the list. */
+    val hiddenSources: Set<String> = emptySet(),
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -86,6 +88,29 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update { it.copy(chatSettings = prefs, sessions = sortSessions(it.sessions, prefs)) }
             }
         }
+        viewModelScope.launch {
+            container.settings.hiddenSources.collect { hidden ->
+                _state.update { it.copy(hiddenSources = hidden) }
+            }
+        }
+    }
+
+    /**
+     * Source groups offered as filter chips: everything present in the current
+     * list plus anything already hidden (so a fully filtered-out group can be
+     * turned back on).
+     */
+    fun sourceFilterOptions(state: HomeUiState = _state.value): List<String> =
+        (state.sessions.mapNotNull { it.source?.trim()?.lowercase()?.takeIf(String::isNotEmpty) } +
+            state.hiddenSources).distinct().sorted()
+
+    fun toggleSourceFilter(source: String) {
+        viewModelScope.launch { container.settings.toggleHiddenSource(source) }
+    }
+
+    private fun sourceVisible(session: SessionSummary, hidden: Set<String>): Boolean {
+        val source = session.source?.trim()?.lowercase() ?: return true
+        return source !in hidden
     }
 
     private fun sortSessions(
@@ -104,9 +129,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      * merging the local registry of sessions archived from this device.
      */
     fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> {
-        if (!state.showArchived) return state.sessions.filter { !it.archived }
-        if (state.features.archivedListing) return state.sessions.filter { it.archived }
-        val serverArchived = state.sessions.filter { it.archived }
+        val hidden = state.hiddenSources
+        if (!state.showArchived) {
+            return state.sessions.filter { !it.archived && sourceVisible(it, hidden) }
+        }
+        if (state.features.archivedListing) {
+            return state.sessions.filter { it.archived && sourceVisible(it, hidden) }
+        }
+        val serverArchived = state.sessions.filter { it.archived && sourceVisible(it, hidden) }
         val serverKeys = state.sessions.map { it.key }.toSet()
         val registryOnly = archivedEntries.value
             .filter { it.sessionKey !in serverKeys }

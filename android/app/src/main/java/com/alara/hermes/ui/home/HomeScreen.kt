@@ -128,6 +128,8 @@ fun HomeScreen(
                             visibleSessions = viewModel.visibleSessions(state),
                             onRefresh = { viewModel.refreshSessions() },
                             onOpenMenu = { scope.launch { drawerState.open() } },
+                            sourceOptions = viewModel.sourceFilterOptions(state),
+                            onToggleSource = viewModel::toggleSourceFilter,
                         )
                     }
                 },

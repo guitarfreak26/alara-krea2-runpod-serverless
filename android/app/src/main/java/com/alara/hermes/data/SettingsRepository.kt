@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.alara.hermes.security.CryptoBox
 import com.alara.hermes.ui.theme.ThemeMode
@@ -56,6 +57,7 @@ class SettingsRepository(
         val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
         val NotificationContent = booleanPreferencesKey("notification_content")
         val LastOpenSession = stringPreferencesKey("last_open_session")
+        val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -99,6 +101,19 @@ class SettingsRepository(
 
     suspend fun setNotificationContentEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.NotificationContent] = enabled }
+    }
+
+    /** Source groups (cron, matrix, discord, …) hidden from the session list. */
+    val hiddenSources: Flow<Set<String>> =
+        context.dataStore.data.map { it[Keys.HiddenSources] ?: emptySet() }
+
+    suspend fun toggleHiddenSource(source: String) {
+        val key = source.trim().lowercase()
+        if (key.isEmpty()) return
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.HiddenSources] ?: emptySet()
+            prefs[Keys.HiddenSources] = if (key in current) current - key else current + key
+        }
     }
 
     /** Canonical id of the conversation that was open — resumed after relaunch. */
