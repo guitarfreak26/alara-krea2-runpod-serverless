@@ -108,6 +108,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         loadProfiles(server.activeProfile)
         refreshSessions()
         startListRefreshLoop()
+        // Server-side session is the source of truth: after relaunch/process
+        // death, resume the same canonical session and reload its messages
+        // from Hermes rather than starting anything new.
+        container.settings.lastOpenSession.first()?.let { last ->
+            if (_state.value.chat.sessionKey == null) openSession(last)
+        }
     }
 
     /** Session list stays fresh even when another client is driving turns. */
@@ -182,6 +188,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             opened.onSuccess { h ->
                 handle = h
                 _state.update { it.copy(chat = it.chat.copy(sessionKey = h.sessionKey)) }
+                container.settings.setLastOpenSession(h.sessionKey)
                 if (sessionKey != null) {
                     // Existing conversation: history must load before any send.
                     // A failure blocks the composer with a retry instead of
@@ -309,6 +316,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.deleteSession(sessionKey) }
+            container.settings.setLastOpenSession(null)
             if (_state.value.chat.sessionKey == sessionKey) closeChat()
             refreshSessions(silent = true)
         }

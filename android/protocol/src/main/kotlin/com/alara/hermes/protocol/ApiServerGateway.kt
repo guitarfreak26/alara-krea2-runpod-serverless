@@ -59,6 +59,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
  *
  * The raw token never appears in logs or user-facing errors (see [redactSecrets]).
  */
+/** The session row is unknown on this surface — fall back to a legacy turn path. */
+private class SessionRowMissing : Exception()
+
 class ApiServerGateway(
     private val baseUrl: HttpUrl,
     token: String,
@@ -76,6 +79,16 @@ class ApiServerGateway(
 
     private val jsonMedia = "application/json".toMediaType()
 
+    /**
+     * Plain REST calls get bounded timeouts; only SSE streams may run
+     * unbounded. Sharing the streaming client's readTimeout(0) for JSON calls
+     * would hang forever against a stalled server.
+     */
+    private val restClient: OkHttpClient = client.newBuilder()
+        .readTimeout(30, TimeUnit.SECONDS)
+        .callTimeout(45, TimeUnit.SECONDS)
+        .build()
+
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connection: StateFlow<ConnectionState> = _connection
 
@@ -84,6 +97,8 @@ class ApiServerGateway(
         val sessionResources: Boolean,
         val sessionUpdate: Boolean,
         val runSubmission: Boolean = false,
+        /** POST /api/sessions/{id}/chat/stream — server-side history, no transcript resend. */
+        val sessionChatStreaming: Boolean = false,
         val model: String? = null,
     )
 
@@ -119,7 +134,7 @@ class ApiServerGateway(
     fun redactSecrets(text: String): String = redact(text, token)
 
     private suspend fun getJson(target: HttpUrl): JsonElement = withContext(Dispatchers.IO) {
-        client.newCall(request(target).get().build()).execute().use { response ->
+        restClient.newCall(request(target).get().build()).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw HermesHttpException(response.code, "HTTP ${response.code} ${target.encodedPath}")
@@ -154,6 +169,8 @@ class ApiServerGateway(
             runSubmission = (features?.get("run_submission") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull()
                 ?: (endpoints?.get("runs") != null),
+            sessionChatStreaming = (features?.get("session_chat_streaming") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull() == true,
             model = (caps?.get("model") as? JsonPrimitive)?.contentOrNull,
         )
         capabilities = parsed
@@ -230,12 +247,40 @@ class ApiServerGateway(
     }.getOrDefault(emptyList())
 
     override suspend fun openSession(sessionKey: String?, profileId: String?): SessionHandle {
-        // New sessions use a client-generated durable id carried on every
-        // completion request, so REST history and chat share one identity.
-        val key = sessionKey ?: "mob-${System.currentTimeMillis()}-${UUID.randomUUID()}"
+        if (capabilities == null) connect()
+        val key = if (sessionKey != null) {
+            sessionKey
+        } else if (capabilities?.sessionChatStreaming == true && capabilities?.sessionResources == true) {
+            // The server mints the canonical session id; every later request,
+            // relaunch and reconnect reuses exactly this id.
+            createServerSession()
+        } else {
+            // Legacy surfaces: client-generated durable id carried on every
+            // completion request so REST history and chat share one identity.
+            "mob-${System.currentTimeMillis()}-${UUID.randomUUID()}"
+        }
         return handles.getOrPut(key) { ApiSessionHandle(key, isNew = sessionKey == null) }
         // Existing sessions: the caller awaits refresh() so a failed history
         // load surfaces as an error instead of silently starting fresh.
+    }
+
+    /** POST /api/sessions — create an empty canonical session row. */
+    private suspend fun createServerSession(): String = withContext(Dispatchers.IO) {
+        val body = buildJsonObject { put("source", "android") }
+        restClient.newCall(
+            request(url("api/sessions"))
+                .post(body.toString().toRequestBody(jsonMedia)).build(),
+        ).execute().use { response ->
+            val payload = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw HermesHttpException(response.code, "session create failed: HTTP ${response.code}")
+            }
+            val obj = json.parseToJsonElement(payload) as? JsonObject
+            val nested = obj?.get("session") as? JsonObject
+            listOf(obj?.get("id"), obj?.get("session_id"), nested?.get("id"), nested?.get("session_id"))
+                .firstNotNullOfOrNull { (it as? JsonPrimitive)?.contentOrNull }
+                ?: throw HermesRpcException("session create returned no id")
+        }
     }
 
     override suspend fun renameSession(sessionKey: String, title: String) {
@@ -244,7 +289,7 @@ class ApiServerGateway(
         }
         val body = buildJsonObject { put("title", title) }
         withContext(Dispatchers.IO) {
-            client.newCall(
+            restClient.newCall(
                 request(url("api/sessions", sessionKey))
                     .patch(body.toString().toRequestBody(jsonMedia)).build(),
             ).execute().use { response ->
@@ -260,7 +305,7 @@ class ApiServerGateway(
         handles.remove(sessionKey)?.close()
         if (capabilities?.sessionResources == true) {
             withContext(Dispatchers.IO) {
-                client.newCall(request(url("api/sessions", sessionKey)).delete().build())
+                restClient.newCall(request(url("api/sessions", sessionKey)).delete().build())
                     .execute().use { response ->
                         // 404 = already gone; that's success for a delete.
                         if (!response.isSuccessful && response.code != 404) {
@@ -370,13 +415,182 @@ class ApiServerGateway(
                     ),
                 )
             }
-            // /v1/runs gives structured events (tools, approvals) but takes
-            // text-only input; image-bearing turns ride chat completions.
-            if (capabilities?.runSubmission == true && attachments.isEmpty()) {
+            // Primary: session-bound streaming — the SERVER loads and persists
+            // the transcript (source of truth); nothing is resent. Runs (with
+            // explicit history) and completions remain fallbacks for older
+            // deployments; a 404 on the session row falls back within the turn.
+            if (capabilities?.sessionChatStreaming == true) {
+                sendViaSessionChat(text, attachments, fallbackHistory = history)
+            } else if (capabilities?.runSubmission == true && attachments.isEmpty()) {
                 sendViaRun(text, history)
             } else {
                 sendViaCompletions(text, attachments)
             }
+        }
+
+        // ---- session-bound streaming turn (/api/sessions/{id}/chat/stream) --
+
+        private fun sendViaSessionChat(
+            text: String,
+            attachments: List<OutgoingAttachment>,
+            fallbackHistory: List<Pair<String, String>>,
+        ) {
+            val body = buildJsonObject {
+                if (attachments.isEmpty()) {
+                    put("message", text)
+                } else {
+                    putJsonArray("message") {
+                        add(buildJsonObject {
+                            put("type", "text")
+                            put("text", text)
+                        })
+                        attachments.forEach { attachment ->
+                            add(buildJsonObject {
+                                put("type", "image_url")
+                                put("image_url", buildJsonObject { put("url", attachment.dataUrl) })
+                            })
+                        }
+                    }
+                }
+                _config.value.model?.let { put("model", it) }
+                _config.value.provider?.let { put("provider", it) }
+                modelOptions()?.let { put("model_options", it) }
+            }
+            val call = client.newCall(
+                request(url("api/sessions", sessionKey, "chat", "stream"))
+                    .header("Accept", "text/event-stream")
+                    .post(body.toString().toRequestBody(jsonMedia))
+                    .build(),
+            )
+            interrupted = false
+            activeCall = call
+            streamJob = scope.launch(Dispatchers.IO) {
+                var runId: String? = null
+                try {
+                    call.execute().use { response ->
+                        if (response.code == 404) {
+                            // Session row unknown to this surface (pre-upgrade
+                            // mob- id): fall back to a runs turn with history.
+                            throw SessionRowMissing()
+                        }
+                        if (!response.isSuccessful) {
+                            throw HermesHttpException(response.code, "session chat failed: HTTP ${response.code}")
+                        }
+                        val source = response.body?.source()
+                            ?: throw HermesRpcException("empty session chat stream")
+                        reduce(WireEvent(type = "message.start", sessionId = sessionKey))
+                        val buffer = StringBuilder()
+                        var eventName: String? = null
+                        while (!source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            when {
+                                line.isEmpty() -> {
+                                    if (buffer.isNotEmpty()) {
+                                        runId = dispatchSessionChatEvent(eventName, buffer.toString(), runId)
+                                    }
+                                    buffer.setLength(0)
+                                    eventName = null
+                                }
+                                line.startsWith(":") -> Unit // keepalive
+                                line.startsWith("event:") -> eventName = line.removePrefix("event:").trim()
+                                line.startsWith("data:") -> buffer.append(line.removePrefix("data:").trim())
+                            }
+                        }
+                        if (buffer.isNotEmpty()) {
+                            runId = dispatchSessionChatEvent(eventName, buffer.toString(), runId)
+                        }
+                    }
+                    if (_timeline.value.running) {
+                        val id = runId
+                        if (id != null) settleFromRunStatus(id) else finishTurn(error = null)
+                    }
+                } catch (t: SessionRowMissing) {
+                    activeCall = null
+                    if (capabilities?.runSubmission == true && attachments.isEmpty()) {
+                        sendViaRun(text, fallbackHistory)
+                    } else {
+                        sendViaCompletions(text, attachments)
+                    }
+                    return@launch
+                } catch (t: Throwable) {
+                    if (interrupted) {
+                        finishTurn(error = null)
+                    } else if (_timeline.value.running) {
+                        val id = runId
+                        if (id != null) {
+                            runCatching { settleFromRunStatus(id) }
+                                .onFailure { finishTurn(error = t.message ?: "session chat stream failed") }
+                        } else {
+                            finishTurn(error = t.message ?: "session chat stream failed")
+                        }
+                    }
+                } finally {
+                    if (activeCall === call) activeCall = null
+                    activeRunId = null
+                }
+            }
+        }
+
+        /** Map one session-chat SSE frame; returns the (possibly updated) run id. */
+        private fun dispatchSessionChatEvent(eventName: String?, data: String, currentRunId: String?): String? {
+            val obj = runCatching { json.parseToJsonElement(data) }.getOrNull() as? JsonObject
+                ?: return currentRunId
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            when (eventName) {
+                "run.started" -> {
+                    val runId = str("run_id")
+                    if (runId != null) {
+                        activeRunId = runId
+                        _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId))
+                        return runId
+                    }
+                }
+                "assistant.delta" -> str("delta")?.let { delta ->
+                    reduce(WireEvent("message.delta", sessionKey, payload = buildJsonObject { put("text", delta) }))
+                }
+                "tool.progress" -> {
+                    val tool = str("tool_name")
+                    if (tool == "_thinking") {
+                        reduce(WireEvent("thinking.delta", sessionKey, payload = buildJsonObject {
+                            put("text", str("delta").orEmpty())
+                        }))
+                    } else if (tool != null) {
+                        reduce(WireEvent("tool.progress", sessionKey, payload = buildJsonObject {
+                            put("name", tool)
+                            str("delta")?.takeIf { it.isNotBlank() }?.let { put("summary", it) }
+                        }))
+                    }
+                }
+                "tool.started" -> reduce(
+                    WireEvent("tool.start", sessionKey, payload = buildJsonObject {
+                        put("name", str("tool_name") ?: "tool")
+                        str("preview")?.let { put("context", it) }
+                    }),
+                )
+                "tool.completed", "tool.failed" -> reduce(
+                    WireEvent("tool.complete", sessionKey, payload = buildJsonObject {
+                        put("name", str("tool_name") ?: "tool")
+                        if (eventName == "tool.failed") put("failed", true)
+                    }),
+                )
+                "run.completed" -> {
+                    reduce(WireEvent("message.complete", sessionKey, payload = buildJsonObject {
+                        put("status", "complete")
+                    }))
+                    val preview = (_timeline.value.entries.lastOrNull {
+                        it is ChatEntry.Message && it.role == Role.ASSISTANT
+                    } as? ChatEntry.Message)?.text.orEmpty().take(160)
+                    _turnEvents.tryEmit(TurnEvent.Completed(sessionKey, preview))
+                    afterTurn()
+                }
+                "error" -> {
+                    val message = str("message") ?: "session chat failed"
+                    reduce(WireEvent("error", sessionKey, payload = buildJsonObject { put("error", message) }))
+                    _turnEvents.tryEmit(TurnEvent.Failed(sessionKey, message))
+                    afterTurn()
+                }
+            }
+            return currentRunId
         }
 
         // ---- structured run turn (/v1/runs) --------------------------------
@@ -400,7 +614,7 @@ class ApiServerGateway(
                 modelOptions()?.let { put("model_options", it) }
             }
             val started = withContext(Dispatchers.IO) {
-                client.newCall(
+                restClient.newCall(
                     request(url("v1/runs"))
                         .post(body.toString().toRequestBody(jsonMedia)).build(),
                 ).execute().use { response ->
@@ -748,7 +962,7 @@ class ApiServerGateway(
                 // Structured stop; the run stream then delivers run.cancelled.
                 runCatching {
                     withContext(Dispatchers.IO) {
-                        client.newCall(
+                        restClient.newCall(
                             request(url("v1/runs", runId, "stop"))
                                 .post("{}".toRequestBody(jsonMedia)).build(),
                         ).execute().close()
@@ -770,7 +984,7 @@ class ApiServerGateway(
                 ?: throw HermesRpcException("no active run is waiting for approval")
             val body = buildJsonObject { put("choice", choice) }
             withContext(Dispatchers.IO) {
-                client.newCall(
+                restClient.newCall(
                     request(url("v1/runs", runId, "approval"))
                         .post(body.toString().toRequestBody(jsonMedia)).build(),
                 ).execute().use { response ->

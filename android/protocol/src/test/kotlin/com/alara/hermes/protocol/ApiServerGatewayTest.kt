@@ -143,6 +143,7 @@ class ApiServerGatewayTest {
 
     @Test
     fun `client generated session ids are durable mob ids`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody())) // openSession probes capabilities
         val handle = gateway.openSession(null, null)
         assertTrue(handle.sessionKey.startsWith("mob-"))
         val again = gateway.openSession(handle.sessionKey, null) // reopen: caller drives refresh

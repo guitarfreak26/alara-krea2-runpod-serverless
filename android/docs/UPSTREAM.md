@@ -113,7 +113,24 @@ implements it as the app's primary connection path:
   through `redact()` (strips the token value, `token=`/`ticket=`/`key=`
   query params, and Bearer header values).
 
-- **Structured runs** (used when `features.run_submission` is advertised):
+- **Session-bound streaming — the primary turn path** (used when
+  `features.session_chat_streaming` is advertised): the SERVER session is the
+  source of truth. New conversations are created with
+  `POST /api/sessions {source:"android"}` (the server mints the canonical id,
+  api_server.py:~3662-); turns run via
+  `POST /api/sessions/{id}/chat/stream {message, model?, model_options?}` —
+  the server loads `_conversation_history_for_session(session_id)` itself and
+  persists the turn, so the client never resends the transcript. SSE events
+  (named `event:` frames): `run.started{run_id}` (pollable/stoppable via
+  `/v1/runs/{run_id}`), `assistant.delta{delta}`,
+  `tool.progress{tool_name,delta}` (`_thinking` → reasoning),
+  `tool.started/completed/failed{tool_name,preview}`, `run.completed`,
+  `error{message}`, `done`. Client disconnect interrupts the live run. A 404
+  on the session row (pre-upgrade client ids) falls back to a runs turn with
+  explicit history inside the same send.
+
+- **Structured runs** (fallback when session chat streaming is absent but
+  `features.run_submission` is advertised):
   `POST /v1/runs` `{input, session_id, model?}` → 202 `{run_id}`
   (api_server.py:6563-6992); `GET /v1/runs/{run_id}/events` SSE with data-only
   frames carrying `event` ∈ `message.delta{delta}`, `tool.started{tool,preview}`,

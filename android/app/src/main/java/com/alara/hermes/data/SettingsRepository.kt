@@ -55,6 +55,7 @@ class SettingsRepository(
         val ActiveFirst = booleanPreferencesKey("sessions_active_first")
         val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
         val NotificationContent = booleanPreferencesKey("notification_content")
+        val LastOpenSession = stringPreferencesKey("last_open_session")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -98,6 +99,15 @@ class SettingsRepository(
 
     suspend fun setNotificationContentEnabled(enabled: Boolean) {
         context.dataStore.edit { it[Keys.NotificationContent] = enabled }
+    }
+
+    /** Canonical id of the conversation that was open — resumed after relaunch. */
+    val lastOpenSession: Flow<String?> = context.dataStore.data.map { it[Keys.LastOpenSession] }
+
+    suspend fun setLastOpenSession(sessionKey: String?) {
+        context.dataStore.edit { prefs ->
+            if (sessionKey == null) prefs.remove(Keys.LastOpenSession) else prefs[Keys.LastOpenSession] = sessionKey
+        }
     }
 
     suspend fun currentServer(): ServerSettings = serverSettings.first()
