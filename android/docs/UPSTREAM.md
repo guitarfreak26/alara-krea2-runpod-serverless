@@ -83,6 +83,29 @@ Re-audit with [`scripts/audit-upstream.sh`](../scripts/audit-upstream.sh).
 - Desktop backoff reference: full-jitter, base 300 ms, cap 15 s
   (`apps/desktop/src/lib/reconnect-backoff.ts`).
 
+## API-server surface (default port 8642)
+
+Some deployments expose the OpenAI-compatible **API server** instead of (or
+alongside) the dashboard gateway. `ApiServerGateway` speaks it:
+
+- validate: `GET /v1/capabilities` with `Authorization: Bearer <key>`
+  (authenticated endpoints only — `/health` and `/api/status` are not probed)
+- sessions: `GET /api/sessions` → `{data:[...]}`; delete via
+  `DELETE /api/sessions/{id}` (404 = already gone)
+- history: `GET /api/sessions/{id}/messages` → `{data:[...]}`
+- models: `GET /v1/models` → `{data:[{id}]}`
+- chat: `POST /v1/chat/completions` `{model, messages, stream:true}` with
+  `X-Hermes-Session-Id: <session>` binding; SSE deltas at
+  `choices[0].delta.content`, tool activity as `event: hermes.tool.progress`
+  frames, `data: [DONE]` terminator; dropping the connection is the
+  interrupt signal (no interrupt endpoint)
+- new sessions use client-generated durable ids (`mob-<ts>-<uuid>`)
+
+No profiles, rename, approvals, or per-session reasoning/fast config exist on
+this surface — the app feature-gates them off (`GatewayFeatures.API_SERVER`).
+Onboarding auto-detects the surface: `/v1/capabilities` first, then the
+dashboard's authenticated session list.
+
 ## Adapted code / patterns
 
 From **luinbytes/hermes-android** (MIT — see `THIRD_PARTY_NOTICES.md`):

@@ -36,14 +36,18 @@ adb install app/build/outputs/apk/debug/app-debug.apk
 
 ## Connecting
 
-1. Launch the app → enter your gateway URL (e.g. `http://your-vps:9119` over
-   Tailscale, or an HTTPS reverse-proxy URL) and the gateway token.
-2. Test & Connect → pick a profile → chat.
+1. Launch the app → enter your gateway URL and token/API key.
+2. Test & Connect — the app auto-detects which Hermes surface it's talking to:
+   - **API server** (default port 8642): validated via `GET /v1/capabilities`
+     with `Authorization: Bearer`; chat streams over `POST /v1/chat/completions`.
+   - **Dashboard gateway** (default port 9119): validated via the
+     authenticated session list; chat over the `/api/ws` JSON-RPC socket.
+3. Pick a profile (dashboard surface) → chat.
 
-Note upstream auth rules: loopback binds only accept loopback peers, and
-non-loopback binds require an auth provider (password/OAuth). Over Tailscale
-the practical setups are an HTTPS/gated bind, or a tunnel that terminates on
-the VPS loopback.
+Dashboard-surface auth rules upstream: loopback binds only accept loopback
+peers, and non-loopback binds require an auth provider (password/OAuth). The
+API server surface uses a plain Bearer key and works from anywhere you can
+reach the port (e.g. Tailscale).
 
 ## Layout
 

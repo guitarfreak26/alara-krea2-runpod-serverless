@@ -56,7 +56,7 @@ class GatewaySocket(
     private val generation = AtomicLong(0)
     private val connectMutex = Mutex()
 
-    private var webSocket: WebSocket? = null
+    @Volatile private var webSocket: WebSocket? = null
     private var reconnectJob: Job? = null
     @Volatile private var desired = false
 
@@ -70,7 +70,7 @@ class GatewaySocket(
     val events: SharedFlow<WireEvent> = _events
 
     /** Emitted whenever a (re)connect handshake completes, so callers can rehydrate. */
-    private val _connected = MutableSharedFlow<Long>(extraBufferCapacity = 4)
+    private val _connected = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 4)
     val connected: SharedFlow<Long> = _connected
 
     val isOpen: Boolean get() = _state.value is SocketState.Open

@@ -13,10 +13,14 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "hermes_settings")
 
+/** Which Hermes surface the saved server speaks. */
+enum class GatewayMode { DASHBOARD, API_SERVER }
+
 data class ServerSettings(
     val url: String,
     val token: String,
     val activeProfile: String?,
+    val mode: GatewayMode = GatewayMode.DASHBOARD,
 ) {
     val isConfigured: Boolean get() = url.isNotBlank() && token.isNotBlank()
 }
@@ -38,6 +42,7 @@ class SettingsRepository(
         val ServerUrl = stringPreferencesKey("server_url")
         val TokenCiphertext = stringPreferencesKey("token_ciphertext")
         val ActiveProfile = stringPreferencesKey("active_profile")
+        val GatewayModeKey = stringPreferencesKey("gateway_mode")
         val ThemeMode = stringPreferencesKey("theme_mode")
         val Onboarded = booleanPreferencesKey("onboarded")
     }
@@ -47,6 +52,9 @@ class SettingsRepository(
             url = prefs[Keys.ServerUrl].orEmpty(),
             token = prefs[Keys.TokenCiphertext]?.let { cryptoBox.decrypt(it) }.orEmpty(),
             activeProfile = prefs[Keys.ActiveProfile],
+            mode = prefs[Keys.GatewayModeKey]
+                ?.let { runCatching { GatewayMode.valueOf(it) }.getOrNull() }
+                ?: GatewayMode.DASHBOARD,
         )
     }
 
@@ -61,11 +69,12 @@ class SettingsRepository(
 
     suspend fun currentServer(): ServerSettings = serverSettings.first()
 
-    suspend fun saveConnection(url: String, token: String) {
+    suspend fun saveConnection(url: String, token: String, mode: GatewayMode) {
         val ciphertext = cryptoBox.encrypt(token)
         context.dataStore.edit { prefs ->
             prefs[Keys.ServerUrl] = url.trim().trimEnd('/')
             prefs[Keys.TokenCiphertext] = ciphertext
+            prefs[Keys.GatewayModeKey] = mode.name
             prefs[Keys.Onboarded] = true
         }
     }

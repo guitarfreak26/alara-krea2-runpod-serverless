@@ -78,21 +78,24 @@ fun SessionListPane(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                val canSwitchProfile = state.features.profiles && state.profiles.isNotEmpty()
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .clickable { profileMenuOpen = true }
+                        .clickable(enabled = canSwitchProfile) { profileMenuOpen = true }
                         .padding(vertical = 4.dp),
                 ) {
                     Text(
                         state.activeProfile ?: "Hermes",
                         style = MaterialTheme.typography.titleLarge,
                     )
-                    Icon(
-                        Icons.Filled.ArrowDropDown,
-                        contentDescription = "Switch profile",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (canSwitchProfile) {
+                        Icon(
+                            Icons.Filled.ArrowDropDown,
+                            contentDescription = "Switch profile",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     DropdownMenu(expanded = profileMenuOpen, onDismissRequest = { profileMenuOpen = false }) {
                         state.profiles.forEach { profile ->
                             DropdownMenuItem(
@@ -194,9 +197,11 @@ fun SessionListPane(
                     overflow = TextOverflow.Ellipsis,
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                SheetAction("Rename") {
-                    renameTarget = session
-                    contextSession = null
+                if (state.features.rename) {
+                    SheetAction("Rename") {
+                        renameTarget = session
+                        contextSession = null
+                    }
                 }
                 SheetAction("Delete") {
                     deleteTarget = session

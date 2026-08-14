@@ -16,6 +16,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.alara.hermes.data.GatewayMode
+import com.alara.hermes.protocol.ApiServerGateway
 import com.alara.hermes.protocol.GatewayEndpoint
 import com.alara.hermes.protocol.HermesLiveGateway
 import com.alara.hermes.protocol.wire.HermesCredential
@@ -70,17 +72,32 @@ private fun OnboardingFlow(container: AppContainer) {
                     return@launch
                 }
                 val probeScope = CoroutineScope(SupervisorJob())
-                val probe = HermesLiveGateway(
+                // Detect which Hermes surface this is. API server first
+                // (GET /v1/capabilities with the Bearer token), then the
+                // dashboard gateway (authenticated session list).
+                val apiProbe = ApiServerGateway(base, token, probeScope)
+                val apiResult = apiProbe.testConnection()
+                if (apiResult.isSuccess) {
+                    apiProbe.disconnect()
+                    probeScope.cancel()
+                    container.settings.saveConnection(url, token, GatewayMode.API_SERVER)
+                    testing = false
+                    return@launch
+                }
+                apiProbe.disconnect()
+                val dashProbe = HermesLiveGateway(
                     endpoint = GatewayEndpoint(base, HermesCredential.Token(token)),
                     scope = probeScope,
                 )
-                val result = probe.testConnection()
-                probe.disconnect()
+                val dashResult = dashProbe.testConnection()
+                dashProbe.disconnect()
                 probeScope.cancel()
-                result.onSuccess {
-                    container.settings.saveConnection(url, token)
-                }.onFailure { t ->
-                    error = "Could not reach Hermes: ${t.message}"
+                dashResult.onSuccess {
+                    container.settings.saveConnection(url, token, GatewayMode.DASHBOARD)
+                }.onFailure {
+                    error = "Could not reach Hermes.\n" +
+                        "API server probe: ${apiResult.exceptionOrNull()?.message}\n" +
+                        "Dashboard probe: ${dashResult.exceptionOrNull()?.message}"
                 }
                 testing = false
             }

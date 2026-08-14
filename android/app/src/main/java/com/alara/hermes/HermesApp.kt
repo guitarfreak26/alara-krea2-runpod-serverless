@@ -2,7 +2,9 @@ package com.alara.hermes
 
 import android.app.Application
 import com.alara.hermes.data.DraftsRepository
+import com.alara.hermes.data.GatewayMode
 import com.alara.hermes.data.SettingsRepository
+import com.alara.hermes.protocol.ApiServerGateway
 import com.alara.hermes.protocol.GatewayEndpoint
 import com.alara.hermes.protocol.HermesGateway
 import com.alara.hermes.protocol.HermesLiveGateway
@@ -21,18 +23,25 @@ class AppContainer(app: Application) {
     @Volatile private var gateway: HermesGateway? = null
     @Volatile private var gatewayKey: String? = null
 
-    /** Build (or reuse) the gateway for the given connection settings. */
-    fun gatewayFor(url: String, token: String): HermesGateway? {
+    fun buildGateway(url: String, token: String, mode: GatewayMode): HermesGateway? {
         val base = HermesRestClient.parseBaseUrl(url) ?: return null
-        val key = "$url|${token.hashCode()}"
+        return when (mode) {
+            GatewayMode.API_SERVER -> ApiServerGateway(base, token, appScope)
+            GatewayMode.DASHBOARD -> HermesLiveGateway(
+                endpoint = GatewayEndpoint(base, HermesCredential.Token(token)),
+                scope = appScope,
+            )
+        }
+    }
+
+    /** Build (or reuse) the gateway for the given connection settings. */
+    fun gatewayFor(url: String, token: String, mode: GatewayMode): HermesGateway? {
+        val key = "$url|${token.hashCode()}|$mode"
         gateway?.let { existing ->
             if (gatewayKey == key) return existing
             existing.disconnect()
         }
-        val created = HermesLiveGateway(
-            endpoint = GatewayEndpoint(base, HermesCredential.Token(token)),
-            scope = appScope,
-        )
+        val created = buildGateway(url, token, mode) ?: return null
         gateway = created
         gatewayKey = key
         return created

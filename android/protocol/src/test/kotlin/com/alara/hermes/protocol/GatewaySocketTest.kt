@@ -175,7 +175,9 @@ class GatewaySocketTest {
         }
 
         // The socket must recover on its own (jittered backoff, second dial).
-        withTimeout(15.seconds) { socket.connected.first() }
+        withTimeout(15.seconds) {
+            socket.state.first { it is com.alara.hermes.protocol.wire.SocketState.Open }
+        }
         val result = socket.request("session.list", buildJsonObject {})
         assertEquals(true, result.jsonObject["ok"]!!.jsonPrimitive.content.toBoolean())
         socket.stop()

@@ -191,6 +191,7 @@ fun ChatPane(
         SessionConfigSheet(
             config = state.chat.config,
             models = state.models,
+            showSessionControls = state.features.sessionConfig,
             onDismiss = { configSheetOpen = false },
             onModel = viewModel::setModel,
             onReasoning = viewModel::setReasoning,

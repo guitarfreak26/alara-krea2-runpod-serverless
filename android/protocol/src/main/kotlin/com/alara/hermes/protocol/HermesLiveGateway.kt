@@ -76,6 +76,8 @@ class HermesLiveGateway(
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connection: StateFlow<ConnectionState> = _connection
 
+    override val features: GatewayFeatures = GatewayFeatures.DASHBOARD
+
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     override val sessionsChanged: SharedFlow<Unit> = _sessionsChanged
 
@@ -141,11 +143,10 @@ class HermesLiveGateway(
     }
 
     override suspend fun testConnection(): Result<String> = runCatching {
-        val status = rest.status()
-        val version = (status as? JsonObject)?.get("version")?.let {
-            (it as? JsonPrimitive)?.contentOrNull
-        }
-        version ?: "connected"
+        // Authenticated probe: validates both reachability and the credential
+        // (public endpoints like /health or /api/status would accept a bad key).
+        rest.listSessions(profile = null, limit = 1)
+        "connected"
     }
 
     override suspend fun listProfiles(): List<HermesProfile> =

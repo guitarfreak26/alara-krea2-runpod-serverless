@@ -38,6 +38,9 @@ interface SessionHandle {
 interface HermesGateway {
     val connection: StateFlow<ConnectionState>
 
+    /** Capabilities of the connected surface; the UI gates on these. */
+    val features: GatewayFeatures
+
     /** Fires when session metadata likely changed (titles, running, new turns). */
     val sessionsChanged: SharedFlow<Unit>
 

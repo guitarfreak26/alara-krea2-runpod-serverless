@@ -34,6 +34,7 @@ data class ChatUiState(
 
 data class HomeUiState(
     val connection: ConnectionState = ConnectionState.Disconnected,
+    val features: com.alara.hermes.protocol.GatewayFeatures = com.alara.hermes.protocol.GatewayFeatures.DASHBOARD,
     val profiles: List<HermesProfile> = emptyList(),
     val activeProfile: String? = null,
     val sessions: List<SessionSummary> = emptyList(),
@@ -64,8 +65,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private suspend fun bootstrap() {
         val server = container.settings.currentServer()
         if (!server.isConfigured) return
-        val gw = container.gatewayFor(server.url, server.token) ?: return
+        val gw = container.gatewayFor(server.url, server.token, server.mode) ?: return
         gateway = gw
+        _state.update { it.copy(features = gw.features) }
         viewModelScope.launch { gw.connection.collect { c -> _state.update { it.copy(connection = c) } } }
         viewModelScope.launch { gw.sessionsChanged.collect { refreshSessions(silent = true) } }
         gw.connect()
