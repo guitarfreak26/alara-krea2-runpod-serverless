@@ -118,6 +118,8 @@ data class ModelOption(
     val id: String,
     val provider: String? = null,
     val displayName: String = id,
+    /** True when this is the profile's currently configured model on the server. */
+    val isCurrent: Boolean = false,
 )
 
 sealed interface ConnectionState {

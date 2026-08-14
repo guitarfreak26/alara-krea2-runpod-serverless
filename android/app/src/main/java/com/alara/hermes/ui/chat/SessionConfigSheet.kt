@@ -1,6 +1,7 @@
 package com.alara.hermes.ui.chat
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import com.alara.hermes.protocol.ModelOption
 import com.alara.hermes.protocol.SessionConfig
 
-private val REASONING_LEVELS = listOf("none", "low", "medium", "high", "max")
+private val REASONING_LEVELS = listOf("default", "none", "low", "medium", "high", "max")
 
 /** Advanced session controls: model, thinking level, fast mode. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -53,11 +54,15 @@ fun SessionConfigSheet(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+                ) {
                     REASONING_LEVELS.forEach { level ->
                         FilterChip(
-                            selected = (config.thinkingLevel ?: "") == level ||
-                                (level == "none" && config.thinkingLevel.isNullOrBlank()),
+                            // null override = the profile's own default applies.
+                            selected = config.thinkingLevel == level ||
+                                (level == "default" && config.thinkingLevel.isNullOrBlank()),
                             onClick = { onReasoning(level) },
                             label = { Text(level) },
                         )
@@ -103,7 +108,9 @@ fun SessionConfigSheet(
             } else {
                 LazyColumn(Modifier.height(320.dp)) {
                     items(models, key = { "${it.provider}/${it.id}" }) { model ->
-                        val selected = config.model == model.id
+                        // No explicit override -> the server's current model is selected.
+                        val selected = config.model == model.id ||
+                            (config.model == null && model.isCurrent)
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
@@ -113,13 +120,14 @@ fun SessionConfigSheet(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(model.displayName, style = MaterialTheme.typography.bodyLarge)
-                                model.provider?.let {
-                                    Text(
-                                        it,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
+                                Text(
+                                    listOfNotNull(
+                                        model.provider,
+                                        "profile default".takeIf { model.isCurrent },
+                                    ).joinToString("  ·  "),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                             if (selected) {
                                 Icon(

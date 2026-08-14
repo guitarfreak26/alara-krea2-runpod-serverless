@@ -274,7 +274,9 @@ private fun ChatHeader(
                         Text(
                             buildString {
                                 append(state.activeProfile ?: "default")
-                                chat.config.model?.let { append("  ·  ").append(it.substringAfterLast('/')) }
+                                val model = chat.config.model
+                                    ?: state.models.firstOrNull { it.isCurrent }?.displayName
+                                model?.let { append("  ·  ").append(it.substringAfterLast('/')) }
                                 chat.config.thinkingLevel?.takeIf { it.isNotBlank() && it != "none" }
                                     ?.let { append("  ·  ").append(it) }
                                 if (chat.config.fastMode == true) append("  ·  fast")

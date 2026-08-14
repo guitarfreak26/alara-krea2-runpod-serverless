@@ -202,6 +202,7 @@ class HermesLiveGateway(
                     id = id,
                     provider = entry.provider ?: provider.slug ?: provider.name,
                     displayName = entry.name ?: id,
+                    isCurrent = entry.isCurrent == true || provider.isCurrent == true,
                 )
             }
         }
@@ -522,8 +523,10 @@ class HermesLiveGateway(
         }
 
         override suspend fun setReasoning(level: String) {
-            configSet("reasoning", level)
-            _config.update { it.copy(thinkingLevel = level) }
+            // "" = provider default on the wire; "none" = explicitly disabled.
+            val value = if (level == "default") "" else level
+            configSet("reasoning", value)
+            _config.update { it.copy(thinkingLevel = level.takeIf { l -> l != "default" }) }
         }
 
         override suspend fun setFastMode(enabled: Boolean) {

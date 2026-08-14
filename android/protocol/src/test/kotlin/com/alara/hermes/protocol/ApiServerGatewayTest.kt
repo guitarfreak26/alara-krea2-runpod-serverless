@@ -194,6 +194,37 @@ class ApiServerGatewayTest {
     }
 
     @Test
+    fun `model inventory marks the profile's configured model as current`() = runBlocking {
+        server.enqueue(
+            MockResponse().setBody(
+                """{"providers":[
+                    {"slug":"openai","name":"OpenAI","is_current":false,"authenticated":true,
+                     "models":["gpt-sol"]},
+                    {"slug":"moonshot","name":"Moonshot","is_current":true,"authenticated":true,
+                     "models":["kimi-k3","kimi-k3-turbo"]}
+                 ],"model":"kimi-k3","provider":"moonshot"}""",
+            ),
+        )
+        val models = gateway.listModels(null)
+        assertEquals("/api/model/options", server.takeRequest().path)
+        // Current model sorts first and is marked; others are not.
+        assertEquals("kimi-k3", models.first().id)
+        assertTrue(models.first().isCurrent)
+        assertEquals("moonshot", models.first().provider)
+        assertTrue(models.filter { it.id != "kimi-k3" }.none { it.isCurrent })
+        assertEquals(setOf("gpt-sol", "kimi-k3", "kimi-k3-turbo"), models.map { it.id }.toSet())
+    }
+
+    @Test
+    fun `model inventory falls back to v1 models when unavailable`() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"hermes-agent"}]}"""))
+        val models = gateway.listModels(null)
+        assertEquals(listOf("hermes-agent"), models.map { it.id })
+        assertTrue(models.none { it.isCurrent })
+    }
+
+    @Test
     fun `features are gated for this surface`() {
         assertTrue(!gateway.features.profiles && !gateway.features.rename)
         // Thinking/fast are supported per-request via model_options.

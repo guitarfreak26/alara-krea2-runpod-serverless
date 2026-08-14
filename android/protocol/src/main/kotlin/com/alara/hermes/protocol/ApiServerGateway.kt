@@ -238,13 +238,46 @@ class ApiServerGateway(
         }
     }
 
-    override suspend fun listModels(sessionKey: String?): List<ModelOption> = runCatching {
-        dataRows(getJson(url("v1/models"))).mapNotNull { row ->
-            val id = (row as? JsonObject)?.get("id")
-                ?.let { (it as? JsonPrimitive)?.contentOrNull } ?: return@mapNotNull null
-            ModelOption(id = id, displayName = id)
-        }
-    }.getOrDefault(emptyList())
+    override suspend fun listModels(sessionKey: String?): List<ModelOption> {
+        // Rich inventory first: mirrors the dashboard/TUI picker and carries
+        // the profile's ACTUAL configured model — /v1/models only advertises
+        // the virtual "hermes-agent" alias.
+        val inventory = runCatching {
+            val payload = getJson(url("api/model/options")) as? JsonObject
+                ?: return@runCatching emptyList()
+            val currentModel = (payload["model"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            val currentProvider = (payload["provider"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
+            val providers = payload["providers"] as? JsonArray ?: return@runCatching emptyList()
+            providers.flatMap { row ->
+                val obj = row as? JsonObject ?: return@flatMap emptyList<ModelOption>()
+                val slug = (obj["slug"] as? JsonPrimitive)?.contentOrNull ?: return@flatMap emptyList()
+                val label = (obj["name"] as? JsonPrimitive)?.contentOrNull ?: slug
+                val rowCurrent = (obj["is_current"] as? JsonPrimitive)?.contentOrNull == "true"
+                (obj["models"] as? JsonArray).orEmpty().mapNotNull { entry ->
+                    val id = when (entry) {
+                        is JsonPrimitive -> entry.contentOrNull
+                        is JsonObject -> ((entry["id"] ?: entry["name"]) as? JsonPrimitive)?.contentOrNull
+                        else -> null
+                    } ?: return@mapNotNull null
+                    ModelOption(
+                        id = id,
+                        provider = slug,
+                        displayName = id,
+                        isCurrent = id == currentModel &&
+                            (currentProvider.isEmpty() || slug.equals(currentProvider, true) || rowCurrent),
+                    )
+                }
+            }.sortedByDescending { it.isCurrent }
+        }.getOrDefault(emptyList())
+        if (inventory.isNotEmpty()) return inventory
+        return runCatching {
+            dataRows(getJson(url("v1/models"))).mapNotNull { row ->
+                val id = (row as? JsonObject)?.get("id")
+                    ?.let { (it as? JsonPrimitive)?.contentOrNull } ?: return@mapNotNull null
+                ModelOption(id = id, displayName = id)
+            }
+        }.getOrDefault(emptyList())
+    }
 
     override suspend fun openSession(sessionKey: String?, profileId: String?): SessionHandle {
         if (capabilities == null) connect()
@@ -1013,7 +1046,8 @@ class ApiServerGateway(
 
         override suspend fun setReasoning(level: String) {
             // Sticky for this conversation; rides every request as model_options.
-            _config.update { it.copy(thinkingLevel = level) }
+            // "default" clears the override so the profile's setting applies.
+            _config.update { it.copy(thinkingLevel = level.takeIf { l -> l != "default" }) }
         }
 
         override suspend fun setFastMode(enabled: Boolean) {
