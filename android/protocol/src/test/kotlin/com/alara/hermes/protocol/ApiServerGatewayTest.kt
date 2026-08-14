@@ -145,9 +145,7 @@ class ApiServerGatewayTest {
     fun `client generated session ids are durable mob ids`() = runBlocking {
         val handle = gateway.openSession(null, null)
         assertTrue(handle.sessionKey.startsWith("mob-"))
-        server.enqueue(MockResponse().setBody(capabilitiesBody())) // reopen refresh probes capabilities
-        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
-        val again = gateway.openSession(handle.sessionKey, null)
+        val again = gateway.openSession(handle.sessionKey, null) // reopen: caller drives refresh
         assertEquals(handle.sessionKey, again.sessionKey)
         handle.close()
     }
@@ -196,7 +194,10 @@ class ApiServerGatewayTest {
 
     @Test
     fun `features are gated for this surface`() {
-        assertEquals(GatewayFeatures.API_SERVER, gateway.features)
         assertTrue(!gateway.features.profiles && !gateway.features.rename)
+        // Thinking/fast are supported per-request via model_options.
+        assertTrue(gateway.features.sessionConfig)
+        // Approvals require the runs surface, unknown until capabilities load.
+        assertTrue(!gateway.features.approvals)
     }
 }

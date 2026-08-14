@@ -94,6 +94,8 @@ class ApiServerGateway(
             rename = capabilities?.sessionUpdate == true,
             // Structured approvals exist only on the /v1/runs stream.
             approvals = capabilities?.runSubmission == true,
+            // Thinking/fast ride each request as model_options overrides.
+            sessionConfig = true,
         )
 
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
@@ -231,11 +233,9 @@ class ApiServerGateway(
         // New sessions use a client-generated durable id carried on every
         // completion request, so REST history and chat share one identity.
         val key = sessionKey ?: "mob-${System.currentTimeMillis()}-${UUID.randomUUID()}"
-        val handle = handles.getOrPut(key) { ApiSessionHandle(key) }
-        if (sessionKey != null) {
-            scope.launch { runCatching { handle.refresh() } }
-        }
-        return handle
+        return handles.getOrPut(key) { ApiSessionHandle(key, isNew = sessionKey == null) }
+        // Existing sessions: the caller awaits refresh() so a failed history
+        // load surfaces as an error instead of silently starting fresh.
     }
 
     override suspend fun renameSession(sessionKey: String, title: String) {
@@ -285,7 +285,13 @@ class ApiServerGateway(
         )
     }.getOrNull()
 
-    inner class ApiSessionHandle(override val sessionKey: String) : SessionHandle {
+    inner class ApiSessionHandle(
+        override val sessionKey: String,
+        private val isNew: Boolean = false,
+    ) : SessionHandle {
+
+        /** True once the authoritative transcript has loaded at least once. */
+        @Volatile private var historyLoaded = isNew
         override val profileId: String = "default"
 
         private val _timeline = MutableStateFlow(TimelineState(sessionKey))
@@ -302,8 +308,12 @@ class ApiServerGateway(
 
         override suspend fun refresh() {
             if (capabilities == null) connect()
-            // Without session resources the streamed timeline is all we have.
-            if (capabilities?.sessionResources != true) return
+            // Without session resources the streamed timeline is all we have;
+            // the server still restores context from its own store.
+            if (capabilities?.sessionResources != true) {
+                historyLoaded = true
+                return
+            }
             val rows = dataRows(getJson(url("api/sessions", sessionKey, "messages")))
             val messages = rows.mapNotNull { row ->
                 runCatching {
@@ -313,7 +323,21 @@ class ApiServerGateway(
             _timeline.update { state ->
                 TimelineReducer.rehydrate(state, messages, System.currentTimeMillis())
             }
+            historyLoaded = true
         }
+
+        /**
+         * The transcript the agent must see this turn, as OpenAI-style rows.
+         * Built from the authoritative timeline BEFORE the optimistic local
+         * echo is appended. /v1/runs executes with exactly the history the
+         * request carries — session_id alone scopes memory/persistence, NOT
+         * transcript loading — so forgetting this field is agent amnesia.
+         */
+        private fun conversationHistory(): List<Pair<String, String>> =
+            _timeline.value.entries
+                .filterIsInstance<ChatEntry.Message>()
+                .filter { it.role != Role.SYSTEM && it.text.isNotBlank() }
+                .map { (if (it.role == Role.USER) "user" else "assistant") to it.text }
 
         override suspend fun send(text: String, attachments: List<OutgoingAttachment>) {
             if (streamJob?.isActive == true) {
@@ -325,6 +349,13 @@ class ApiServerGateway(
                     "only image attachments are supported on this surface (got ${it.mimeType})",
                 )
             }
+            if (!historyLoaded) {
+                // A resumed conversation whose transcript never loaded must not
+                // run a turn: the agent would answer with no context. Fail loud;
+                // the UI offers retry — never silently start fresh.
+                refresh()
+            }
+            val history = conversationHistory()
             _timeline.update { state ->
                 state.copy(
                     running = true,
@@ -342,7 +373,7 @@ class ApiServerGateway(
             // /v1/runs gives structured events (tools, approvals) but takes
             // text-only input; image-bearing turns ride chat completions.
             if (capabilities?.runSubmission == true && attachments.isEmpty()) {
-                sendViaRun(text)
+                sendViaRun(text, history)
             } else {
                 sendViaCompletions(text, attachments)
             }
@@ -350,11 +381,23 @@ class ApiServerGateway(
 
         // ---- structured run turn (/v1/runs) --------------------------------
 
-        private suspend fun sendViaRun(text: String) {
+        private suspend fun sendViaRun(text: String, history: List<Pair<String, String>>) {
             val body = buildJsonObject {
                 put("input", text)
                 put("session_id", sessionKey)
+                if (history.isNotEmpty()) {
+                    putJsonArray("conversation_history") {
+                        history.forEach { (role, content) ->
+                            add(buildJsonObject {
+                                put("role", role)
+                                put("content", content)
+                            })
+                        }
+                    }
+                }
                 _config.value.model?.let { put("model", it) }
+                _config.value.provider?.let { put("provider", it) }
+                modelOptions()?.let { put("model_options", it) }
             }
             val started = withContext(Dispatchers.IO) {
                 client.newCall(
@@ -531,6 +574,8 @@ class ApiServerGateway(
         private fun sendViaCompletions(text: String, attachments: List<OutgoingAttachment>) {
             val body = buildJsonObject {
                 put("model", _config.value.model ?: "hermes-agent")
+                _config.value.provider?.let { put("provider", it) }
+                modelOptions()?.let { put("model_options", it) }
                 put("stream", true)
                 putJsonArray("messages") {
                     add(
@@ -742,12 +787,23 @@ class ApiServerGateway(
             _config.update { it.copy(model = model, provider = provider) }
         }
 
+        /** Per-request overrides: {reasoning_effort, fast} per api_server contract. */
+        private fun modelOptions(): JsonObject? {
+            val config = _config.value
+            if (config.thinkingLevel == null && config.fastMode == null) return null
+            return buildJsonObject {
+                config.thinkingLevel?.let { put("reasoning_effort", it) }
+                config.fastMode?.let { put("fast", it) }
+            }
+        }
+
         override suspend fun setReasoning(level: String) {
-            throw HermesRpcException("reasoning control is not supported by the API server surface")
+            // Sticky for this conversation; rides every request as model_options.
+            _config.update { it.copy(thinkingLevel = level) }
         }
 
         override suspend fun setFastMode(enabled: Boolean) {
-            throw HermesRpcException("fast mode is not supported by the API server surface")
+            _config.update { it.copy(fastMode = enabled) }
         }
 
         override fun close() {

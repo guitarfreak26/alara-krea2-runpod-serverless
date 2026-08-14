@@ -196,17 +196,27 @@ fun ChatPane(
         }
 
         chat.error?.let { error ->
-            Text(
-                error,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.error,
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-            )
+            ) {
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.weight(1f),
+                )
+                if (chat.loadFailed) {
+                    androidx.compose.material3.TextButton(onClick = viewModel::retryLoad) {
+                        Text("Retry")
+                    }
+                }
+            }
         }
 
         Composer(
             sessionKey = chat.sessionKey,
-            sending = chat.sending,
+            sending = chat.sending || chat.loadFailed,
             running = chat.timeline?.running == true,
             offline = state.connection !is com.alara.hermes.protocol.ConnectionState.Connected,
             onSend = viewModel::send,

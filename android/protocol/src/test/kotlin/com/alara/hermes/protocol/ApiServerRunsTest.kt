@@ -75,6 +75,7 @@ class ApiServerRunsTest {
         val submitBody = submit.body.readUtf8()
         assertTrue(submitBody.contains("\"input\":\"hi\""))
         assertTrue(submitBody.contains("\"session_id\":\"${handle.sessionKey}\""))
+        assertTrue(!submitBody.contains("conversation_history")) // fresh conversation
         assertEquals("/v1/runs/run_abc/events", server.takeRequest().path)
 
         val timeline = handle.timeline.value
@@ -126,6 +127,101 @@ class ApiServerRunsTest {
         assertTrue(
             handle.timeline.value.entries.filterIsInstance<ChatEntry.Approval>().all { it.resolved },
         )
+        handle.close()
+    }
+
+    @Test
+    fun `resumed sessions carry conversation history so the agent keeps context`() = runBlocking {
+        // /v1/runs executes with exactly the history the request carries;
+        // omitting it makes the agent forget everything (the clip-2 bug).
+        server.enqueue(
+            MockResponse().setBody(
+                """{"model":"hermes-4",
+                    "features":{"chat_completions":true,"run_submission":true,"session_resources":true},
+                    "endpoints":{"runs":{},"sessions":{}}}""",
+            ),
+        )
+        // openSession(existing) -> caller refresh() -> transcript fetch
+        server.enqueue(
+            MockResponse().setBody(
+                """{"data":[
+                    {"id":1,"role":"user","content":"make clip one of frankie"},
+                    {"id":2,"role":"assistant","content":"Clip one is rendering: sitcom scene in the car."}
+                 ]}""",
+            ),
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(202).setBody("""{"run_id":"run_h","status":"started"}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+                "data: {\"event\":\"run.completed\",\"run_id\":\"run_h\",\"output\":\"Clip two continues the car scene.\",\"usage\":{}}\n\n",
+            ),
+        )
+        // finishTurn refresh
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+
+        val handle = gateway.openSession("existing-session", null)
+        handle.refresh()
+        handle.send("now make clip two")
+
+        withTimeout(10.seconds) {
+            while (handle.timeline.value.running) delay(50)
+        }
+
+        server.takeRequest() // capabilities
+        server.takeRequest() // transcript
+        val submit = server.takeRequest()
+        assertEquals("/v1/runs", submit.path)
+        val body = submit.body.readUtf8()
+        assertTrue(body.contains("conversation_history"))
+        assertTrue(body.contains("make clip one of frankie"))
+        assertTrue(body.contains("Clip one is rendering"))
+        assertTrue(body.contains("\"input\":\"now make clip two\""))
+        handle.close()
+    }
+
+    @Test
+    fun `send on resumed session fails loud when history cannot load`() = runBlocking {
+        server.enqueue(MockResponse().setBody(runsCapabilities().replace("\"session_resources\":false", "\"session_resources\":true").replace("\"endpoints\":{", "\"endpoints\":{\"sessions\":{},")))
+        // History fetch fails -> send must throw, never run context-free.
+        server.enqueue(MockResponse().setResponseCode(500))
+        val handle = gateway.openSession("existing-session", null)
+        try {
+            handle.send("continue the clip")
+            throw AssertionError("expected send to fail without history")
+        } catch (expected: Exception) {
+            assertTrue(handle.timeline.value.entries.isEmpty())
+        }
+        handle.close()
+    }
+
+    @Test
+    fun `reasoning and fast ride requests as model_options`() = runBlocking {
+        server.enqueue(MockResponse().setBody(runsCapabilities()))
+        server.enqueue(
+            MockResponse().setResponseCode(202).setBody("""{"run_id":"run_o","status":"started"}"""),
+        )
+        server.enqueue(
+            MockResponse().setHeader("Content-Type", "text/event-stream").setBody(
+                "data: {\"event\":\"run.completed\",\"run_id\":\"run_o\",\"output\":\"ok\",\"usage\":{}}\n\n",
+            ),
+        )
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+
+        val handle = gateway.openSession(null, null)
+        handle.setReasoning("high")
+        handle.setFastMode(true)
+        handle.send("think hard")
+        withTimeout(10.seconds) {
+            while (handle.timeline.value.running) delay(50)
+        }
+        server.takeRequest() // capabilities
+        val submit = server.takeRequest()
+        val body = submit.body.readUtf8()
+        assertTrue(body.contains("model_options"))
+        assertTrue(body.contains("\"reasoning_effort\":\"high\""))
+        assertTrue(body.contains("\"fast\":true"))
         handle.close()
     }
 

@@ -32,6 +32,8 @@ data class ChatUiState(
     val config: SessionConfig = SessionConfig(),
     val sending: Boolean = false,
     val error: String? = null,
+    /** True when an existing conversation's history failed to load; sends are blocked. */
+    val loadFailed: Boolean = false,
 )
 
 data class HomeUiState(
@@ -180,6 +182,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             opened.onSuccess { h ->
                 handle = h
                 _state.update { it.copy(chat = it.chat.copy(sessionKey = h.sessionKey)) }
+                if (sessionKey != null) {
+                    // Existing conversation: history must load before any send.
+                    // A failure blocks the composer with a retry instead of
+                    // silently running the agent without context.
+                    runCatching { h.refresh() }.onFailure { t ->
+                        _state.update {
+                            it.copy(
+                                chat = it.chat.copy(
+                                    loadFailed = true,
+                                    error = clean("Couldn't load this conversation from the server: ${t.message}"),
+                                ),
+                            )
+                        }
+                    }
+                }
                 handleJobs += viewModelScope.launch {
                     h.timeline.collect { t -> _state.update { it.copy(chat = it.chat.copy(timeline = t)) } }
                 }
@@ -204,8 +221,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(chat = ChatUiState(), models = emptyList()) }
     }
 
+    /** Retry loading a conversation whose history fetch failed. */
+    fun retryLoad() {
+        val h = handle ?: return
+        viewModelScope.launch {
+            runCatching { h.refresh() }
+                .onSuccess {
+                    _state.update { it.copy(chat = it.chat.copy(loadFailed = false, error = null)) }
+                }
+                .onFailure { t ->
+                    _state.update {
+                        it.copy(chat = it.chat.copy(error = clean("Still can't load: ${t.message}")))
+                    }
+                }
+        }
+    }
+
     fun send(text: String, attachments: List<com.alara.hermes.protocol.OutgoingAttachment> = emptyList()) {
         val h = handle ?: return
+        if (_state.value.chat.loadFailed) return
         if (text.isBlank() && attachments.isEmpty()) return
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }
         viewModelScope.launch {
