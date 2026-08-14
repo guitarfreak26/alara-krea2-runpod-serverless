@@ -36,11 +36,21 @@ class ApiServerGatewayTest {
         server.shutdown()
     }
 
+    private fun capabilitiesBody(sessionResources: Boolean = true, sessionUpdate: Boolean = true) = buildString {
+        append("""{"object":"hermes.api_server.capabilities","platform":"hermes-agent","model":"hermes-4",""")
+        append(""""auth":{"type":"bearer","required":true},""")
+        append(""""features":{"chat_completions":true,"session_resources":$sessionResources},""")
+        append(""""endpoints":{"chat_completions":{"method":"POST","path":"/v1/chat/completions"}""")
+        if (sessionResources) append(""","sessions":{"method":"GET","path":"/api/sessions"}""")
+        if (sessionUpdate) append(""","session_update":{"method":"PATCH","path":"/api/sessions/{session_id}"}""")
+        append("}}")
+    }
+
     @Test
     fun `capabilities probe validates with bearer auth`() = runBlocking {
-        server.enqueue(MockResponse().setBody("""{"version":"0.21.0","features":["chat"]}"""))
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
         val result = gateway.testConnection()
-        assertEquals("0.21.0", result.getOrThrow())
+        assertEquals("connected (hermes-4)", result.getOrThrow())
         val request = server.takeRequest()
         assertEquals("/v1/capabilities", request.path)
         assertEquals("Bearer api-key", request.getHeader("Authorization"))
@@ -48,6 +58,7 @@ class ApiServerGatewayTest {
 
     @Test
     fun `session list parses data envelope`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
         server.enqueue(
             MockResponse().setBody(
                 """{"data":[
@@ -62,6 +73,7 @@ class ApiServerGatewayTest {
         assertEquals(listOf("s1", "s2"), sessions.map { it.key })
         assertEquals("video batch", sessions[0].title)
 
+        assertEquals("/v1/capabilities", server.takeRequest().path)
         val request = server.takeRequest()
         assertEquals("/api/sessions", request.path)
         assertEquals("Bearer api-key", request.getHeader("Authorization"))
@@ -87,7 +99,8 @@ class ApiServerGatewayTest {
                 .setHeader("Content-Type", "text/event-stream")
                 .setBody(sse),
         )
-        // finishTurn refreshes from the transcript endpoint afterwards.
+        // finishTurn refresh: capabilities probe (first use), then transcript.
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
         server.enqueue(
             MockResponse().setBody(
                 """{"data":[
@@ -130,7 +143,8 @@ class ApiServerGatewayTest {
     fun `client generated session ids are durable mob ids`() = runBlocking {
         val handle = gateway.openSession(null, null)
         assertTrue(handle.sessionKey.startsWith("mob-"))
-        server.enqueue(MockResponse().setBody("""{"data":[]}""")) // reopen triggers a refresh
+        server.enqueue(MockResponse().setBody(capabilitiesBody())) // reopen refresh probes capabilities
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
         val again = gateway.openSession(handle.sessionKey, null)
         assertEquals(handle.sessionKey, again.sessionKey)
         handle.close()
@@ -138,9 +152,44 @@ class ApiServerGatewayTest {
 
     @Test
     fun `delete treats 404 as success`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        gateway.testConnection().getOrThrow()
         server.enqueue(MockResponse().setResponseCode(404))
         gateway.deleteSession("ghost") // must not throw
+        server.takeRequest() // capabilities
         assertEquals("/api/sessions/ghost", server.takeRequest().path)
+    }
+
+    @Test
+    fun `token is trimmed before building the bearer header`() = runBlocking {
+        val messy = ApiServerGateway(server.url("/"), "  api-key\n", scope)
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        messy.testConnection().getOrThrow()
+        assertEquals("Bearer api-key", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test
+    fun `session endpoints are skipped when capabilities does not advertise them`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody(sessionResources = false, sessionUpdate = false)))
+        val sessions = gateway.listSessions(null)
+        assertEquals("/v1/capabilities", server.takeRequest().path)
+        assertEquals(1, server.requestCount) // no /api/sessions call followed
+        assertTrue(sessions.isEmpty())
+        assertTrue(!gateway.features.rename)
+    }
+
+    @Test
+    fun `rename uses PATCH when advertised`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        gateway.testConnection().getOrThrow()
+        server.enqueue(MockResponse().setBody("""{"ok":true}"""))
+        gateway.renameSession("s1", "New title")
+        server.takeRequest() // capabilities
+        val patch = server.takeRequest()
+        assertEquals("PATCH", patch.method)
+        assertEquals("/api/sessions/s1", patch.path)
+        assertTrue(patch.body.readUtf8().contains("New title"))
+        assertTrue(gateway.features.rename)
     }
 
     @Test

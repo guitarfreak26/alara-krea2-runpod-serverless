@@ -12,6 +12,7 @@ import com.alara.hermes.protocol.SessionConfig
 import com.alara.hermes.protocol.SessionHandle
 import com.alara.hermes.protocol.SessionSummary
 import com.alara.hermes.protocol.TimelineState
+import com.alara.hermes.protocol.redact
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,6 +55,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private var gateway: HermesGateway? = null
+    private var secretToken: String = ""
     private var handle: SessionHandle? = null
     private var handleJobs = mutableListOf<Job>()
     private var refreshJob: Job? = null
@@ -65,6 +67,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private suspend fun bootstrap() {
         val server = container.settings.currentServer()
         if (!server.isConfigured) return
+        secretToken = server.token
         val gw = container.gatewayFor(server.url, server.token, server.mode) ?: return
         gateway = gw
         _state.update { it.copy(features = gw.features) }
@@ -162,7 +165,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     _state.update { it.copy(models = models) }
                 }
             }.onFailure { t ->
-                _state.update { it.copy(chat = it.chat.copy(error = t.message ?: "Could not open session")) }
+                _state.update { it.copy(chat = it.chat.copy(error = clean(t.message))) }
             }
         }
     }
@@ -183,7 +186,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             runCatching { h.send(text) }
                 .onFailure { t ->
                     _state.update {
-                        it.copy(chat = it.chat.copy(error = "Send failed: ${t.message}. Not re-sent automatically."))
+                        it.copy(chat = it.chat.copy(error = clean("Send failed: ${t.message}. Not re-sent automatically.")))
                     }
                 }
             _state.update { it.copy(chat = it.chat.copy(sending = false)) }
@@ -202,7 +205,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch {
             runCatching { h.respondApproval(entryId, choice) }
                 .onFailure { t ->
-                    _state.update { it.copy(chat = it.chat.copy(error = "Approval failed: ${t.message}")) }
+                    _state.update { it.copy(chat = it.chat.copy(error = clean("Approval failed: ${t.message}"))) }
                 }
         }
     }
@@ -211,7 +214,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val h = handle ?: return
         viewModelScope.launch {
             runCatching { h.setModel(option.id, option.provider) }
-                .onFailure { t -> _state.update { it.copy(notice = "Model change failed: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(notice = clean("Model change failed: ${t.message}")) } }
         }
     }
 
@@ -219,7 +222,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val h = handle ?: return
         viewModelScope.launch {
             runCatching { h.setReasoning(level) }
-                .onFailure { t -> _state.update { it.copy(notice = "Reasoning change failed: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(notice = clean("Reasoning change failed: ${t.message}")) } }
         }
     }
 
@@ -227,7 +230,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val h = handle ?: return
         viewModelScope.launch {
             runCatching { h.setFastMode(enabled) }
-                .onFailure { t -> _state.update { it.copy(notice = "Fast mode change failed: ${t.message}") } }
+                .onFailure { t -> _state.update { it.copy(notice = clean("Fast mode change failed: ${t.message}")) } }
         }
     }
 
@@ -250,6 +253,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             refreshSessions(silent = true)
         }
     }
+
+    /** Exception text can echo URLs/headers; never surface credentials. */
+    private fun clean(message: String?): String = redact(message ?: "unknown error", secretToken)
 
     fun dismissNotice() {
         _state.update { it.copy(notice = null) }

@@ -39,23 +39,29 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * [HermesGateway] implementation for the Hermes **API server** surface
  * (default port 8642): OpenAI-compatible REST + SSE with Bearer auth.
  *
- * Contract used here:
- * - validate:  GET /v1/capabilities            (Authorization: Bearer)
- * - sessions:  GET /api/sessions               -> {data:[...]}
- * - history:   GET /api/sessions/{id}/messages -> {data:[...]}
- * - delete:    DELETE /api/sessions/{id}
- * - models:    GET /v1/models                  -> {data:[{id}]}
+ * Contract used here (traced from hermes-agent gateway/platforms/api_server.py):
+ * - auth:      `Authorization: Bearer <API_SERVER_KEY>` on EVERY request; the
+ *              server strips + timing-safe-compares the token and answers 401
+ *              `gateway_auth_failed` on mismatch. Nothing else is used for
+ *              auth: no X-API-Key, no cookies, no dashboard-password flow.
+ * - validate:  GET /v1/capabilities (auth-required) — also advertises the
+ *              deployment's feature/endpoint surface, which gates everything
+ *              below at runtime.
  * - chat:      POST /v1/chat/completions  {model, messages, stream:true}
  *              + header X-Hermes-Session-Id binding the Hermes session;
  *              streaming arrives as SSE deltas plus `hermes.tool.progress`
  *              tool events; dropping the connection interrupts the turn.
+ * - sessions:  GET /api/sessions, GET /api/sessions/{id}/messages,
+ *              PATCH/DELETE /api/sessions/{id} — called ONLY when
+ *              capabilities advertises `session_resources`; never used for
+ *              validation.
+ * - models:    GET /v1/models -> {data:[{id}]}
  *
- * This surface has no profiles, rename, approvals, or per-session
- * reasoning/fast config — those are feature-gated off.
+ * The raw token never appears in logs or user-facing errors (see [redactSecrets]).
  */
 class ApiServerGateway(
     private val baseUrl: HttpUrl,
-    private val token: String,
+    token: String,
     private val scope: CoroutineScope,
     private val json: Json = HermesLiveGateway.defaultJson,
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -64,12 +70,26 @@ class ApiServerGateway(
         .build(),
 ) : HermesGateway {
 
+    // Pasted keys often carry stray whitespace/newlines; the server compares
+    // the stripped value, so trim before it ever leaves the device.
+    private val token: String = token.trim()
+
     private val jsonMedia = "application/json".toMediaType()
 
     private val _connection = MutableStateFlow<ConnectionState>(ConnectionState.Disconnected)
     override val connection: StateFlow<ConnectionState> = _connection
 
-    override val features: GatewayFeatures = GatewayFeatures.API_SERVER
+    /** What this deployment advertised via /v1/capabilities. */
+    data class ServerCapabilities(
+        val sessionResources: Boolean,
+        val sessionUpdate: Boolean,
+        val model: String? = null,
+    )
+
+    @Volatile private var capabilities: ServerCapabilities? = null
+
+    override val features: GatewayFeatures
+        get() = GatewayFeatures.API_SERVER.copy(rename = capabilities?.sessionUpdate == true)
 
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     override val sessionsChanged: SharedFlow<Unit> = _sessionsChanged
@@ -84,6 +104,9 @@ class ApiServerGateway(
 
     private fun request(target: HttpUrl): Request.Builder =
         Request.Builder().url(target).header("Authorization", "Bearer $token")
+
+    /** Strip the token (and any credential query params) from outbound text. */
+    fun redactSecrets(text: String): String = redact(text, token)
 
     private suspend fun getJson(target: HttpUrl): JsonElement = withContext(Dispatchers.IO) {
         client.newCall(request(target).get().build()).execute().use { response ->
@@ -110,11 +133,20 @@ class ApiServerGateway(
     }
 
     override suspend fun testConnection(): Result<String> = runCatching {
-        val caps = getJson(url("v1/capabilities"))
-        val version = (caps as? JsonObject)?.get("version")
-            ?.let { (it as? JsonPrimitive)?.contentOrNull }
-        _connection.value = ConnectionState.Connected(version)
-        version ?: "connected"
+        val caps = getJson(url("v1/capabilities")) as? JsonObject
+        val features = caps?.get("features") as? JsonObject
+        val endpoints = caps?.get("endpoints") as? JsonObject
+        val parsed = ServerCapabilities(
+            sessionResources = (features?.get("session_resources") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull()
+                ?: (endpoints?.get("sessions") != null),
+            sessionUpdate = endpoints?.get("session_update") != null,
+            model = (caps?.get("model") as? JsonPrimitive)?.contentOrNull,
+        )
+        capabilities = parsed
+        val label = parsed.model?.let { "connected ($it)" } ?: "connected"
+        _connection.value = ConnectionState.Connected(label)
+        label
     }
 
     override suspend fun listProfiles(): List<HermesProfile> = emptyList()
@@ -126,7 +158,24 @@ class ApiServerGateway(
         else -> JsonArray(emptyList())
     }
 
+    /** Sessions the app itself opened; the fallback list when the server does not expose session resources. */
+    private fun locallyKnownSessions(): List<SessionSummary> = handles.values.map { handle ->
+        SessionSummary(
+            key = handle.sessionKey,
+            profileId = "default",
+            title = "Conversation ${handle.sessionKey.takeLast(6)}",
+            preview = (handle.timeline.value.entries.lastOrNull() as? ChatEntry.Message)
+                ?.text.orEmpty().replace('\n', ' ').take(140),
+            updatedAtMs = handle.timeline.value.entries.lastOrNull()?.timestampMs ?: 0L,
+            running = handle.timeline.value.running,
+        )
+    }.sortedByDescending { it.updatedAtMs }
+
     override suspend fun listSessions(profileId: String?): List<SessionSummary> {
+        if (capabilities == null) connect()
+        // Session resources are optional on this surface; only call the
+        // endpoint when the deployment advertises it via /v1/capabilities.
+        if (capabilities?.sessionResources != true) return locallyKnownSessions()
         val rows = dataRows(getJson(url("api/sessions")))
         return rows.mapNotNull { row ->
             val session = runCatching {
@@ -179,19 +228,35 @@ class ApiServerGateway(
     }
 
     override suspend fun renameSession(sessionKey: String, title: String) {
-        throw HermesRpcException("rename is not supported by the API server surface")
+        if (capabilities?.sessionUpdate != true) {
+            throw HermesRpcException("this server does not advertise session rename")
+        }
+        val body = buildJsonObject { put("title", title) }
+        withContext(Dispatchers.IO) {
+            client.newCall(
+                request(url("api/sessions", sessionKey))
+                    .patch(body.toString().toRequestBody(jsonMedia)).build(),
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw HermesHttpException(response.code, "rename failed: HTTP ${response.code}")
+                }
+            }
+        }
+        _sessionsChanged.tryEmit(Unit)
     }
 
     override suspend fun deleteSession(sessionKey: String) {
         handles.remove(sessionKey)?.close()
-        withContext(Dispatchers.IO) {
-            client.newCall(request(url("api/sessions", sessionKey)).delete().build())
-                .execute().use { response ->
-                    // 404 = already gone; that's success for a delete.
-                    if (!response.isSuccessful && response.code != 404) {
-                        throw HermesHttpException(response.code, "delete failed: HTTP ${response.code}")
+        if (capabilities?.sessionResources == true) {
+            withContext(Dispatchers.IO) {
+                client.newCall(request(url("api/sessions", sessionKey)).delete().build())
+                    .execute().use { response ->
+                        // 404 = already gone; that's success for a delete.
+                        if (!response.isSuccessful && response.code != 404) {
+                            throw HermesHttpException(response.code, "delete failed: HTTP ${response.code}")
+                        }
                     }
-                }
+            }
         }
         _sessionsChanged.tryEmit(Unit)
     }
@@ -211,6 +276,9 @@ class ApiServerGateway(
         private val seenTools = ConcurrentHashMap.newKeySet<String>()
 
         override suspend fun refresh() {
+            if (capabilities == null) connect()
+            // Without session resources the streamed timeline is all we have.
+            if (capabilities?.sessionResources != true) return
             val rows = dataRows(getJson(url("api/sessions", sessionKey, "messages")))
             val messages = rows.mapNotNull { row ->
                 runCatching {

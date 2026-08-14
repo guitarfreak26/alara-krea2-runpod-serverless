@@ -85,26 +85,39 @@ Re-audit with [`scripts/audit-upstream.sh`](../scripts/audit-upstream.sh).
 
 ## API-server surface (default port 8642)
 
-Some deployments expose the OpenAI-compatible **API server** instead of (or
-alongside) the dashboard gateway. `ApiServerGateway` speaks it:
+Canonical source: `gateway/platforms/api_server.py`. `ApiServerGateway`
+implements it as the app's primary connection path:
 
-- validate: `GET /v1/capabilities` with `Authorization: Bearer <key>`
-  (authenticated endpoints only — `/health` and `/api/status` are not probed)
-- sessions: `GET /api/sessions` → `{data:[...]}`; delete via
-  `DELETE /api/sessions/{id}` (404 = already gone)
-- history: `GET /api/sessions/{id}/messages` → `{data:[...]}`
-- models: `GET /v1/models` → `{data:[{id}]}`
-- chat: `POST /v1/chat/completions` `{model, messages, stream:true}` with
-  `X-Hermes-Session-Id: <session>` binding; SSE deltas at
-  `choices[0].delta.content`, tool activity as `event: hermes.tool.progress`
-  frames, `data: [DONE]` terminator; dropping the connection is the
-  interrupt signal (no interrupt endpoint)
-- new sessions use client-generated durable ids (`mob-<ts>-<uuid>`)
+- **Auth** (`_check_auth`, api_server.py:1781-1830): `Authorization: Bearer
+  <API_SERVER_KEY>` on every request — the token is trimmed client-side, the
+  server strips + `hmac.compare_digest`s it and answers 401
+  `gateway_auth_failed`. Nothing else is used: no `X-API-Key`, no
+  `/api/status`, no cookies, no dashboard-password flow, and `/api/sessions`
+  is never used for validation.
+- **Validation + discovery**: `GET /v1/capabilities` (auth-required;
+  api_server.py:3094). Its `features`/`endpoints` payload gates everything
+  optional at runtime — e.g. `session_resources` enables
+  `GET /api/sessions`, `GET /api/sessions/{id}/messages`,
+  `DELETE /api/sessions/{id}` (404 = already gone), and `session_update`
+  enables rename via `PATCH /api/sessions/{id}`. Deployments without those
+  endpoints fall back to a local view of app-opened sessions.
+- **Chat**: `POST /v1/chat/completions` `{model, messages, stream:true}` with
+  `X-Hermes-Session-Id` session continuity (api_server.py:4168-4175); SSE
+  deltas at `choices[0].delta.content`, tool activity as
+  `event: hermes.tool.progress` frames, `data: [DONE]` terminator; dropping
+  the connection is the interrupt signal. New sessions use client-generated
+  durable ids (`mob-<ts>-<uuid>`).
+- **Models**: `GET /v1/models` → `{data:[{id}]}`.
+- **Secrets**: the token is Keystore-encrypted at rest, no log statements
+  exist in app/protocol code, and every user-facing error string passes
+  through `redact()` (strips the token value, `token=`/`ticket=`/`key=`
+  query params, and Bearer header values).
 
-No profiles, rename, approvals, or per-session reasoning/fast config exist on
-this surface — the app feature-gates them off (`GatewayFeatures.API_SERVER`).
-Onboarding auto-detects the surface: `/v1/capabilities` first, then the
-dashboard's authenticated session list.
+Not yet used from this surface (available upstream, candidates for next
+milestones): `/v1/responses`, `/v1/runs` + `/v1/runs/{id}/events` SSE with
+approvals/steer/stop, `/v1/skills`, `/v1/toolsets`, `/api/jobs` (cron),
+`/api/model/options`, session fork/model-lock, and `/p/{profile}/…` profile
+mirrors (api_server.py:2050-2103, :7363).
 
 ## Adapted code / patterns
 
