@@ -1,5 +1,7 @@
 package com.alara.hermes
 
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -32,10 +34,24 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        consumeOpenSessionIntent(intent)
+    }
+
+    private fun consumeOpenSessionIntent(intent: Intent?) {
+        intent?.getStringExtra(com.alara.hermes.notify.NotificationCenter.EXTRA_OPEN_SESSION)
+            ?.let { key ->
+                (application as HermesApp).container.pendingOpenSession.value = key
+                intent.removeExtra(com.alara.hermes.notify.NotificationCenter.EXTRA_OPEN_SESSION)
+            }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val container = (application as HermesApp).container
+        consumeOpenSessionIntent(intent)
         setContent {
             val onboarded by container.settings.onboarded.collectAsState(initial = null)
             val appearance by container.settings.appearance.collectAsState(initial = null)
@@ -97,6 +113,16 @@ private fun MainFlow(container: AppContainer) {
     val viewModel: HomeViewModel = viewModel(factory = HomeViewModel.factory(container))
     var settingsOpen by remember { mutableStateOf(false) }
 
+    // Android 13+ requires runtime opt-in before any notification shows.
+    if (Build.VERSION.SDK_INT >= 33) {
+        val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+            androidx.activity.result.contract.ActivityResultContracts.RequestPermission(),
+        ) { }
+        androidx.compose.runtime.LaunchedEffect(Unit) {
+            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
     // Reconcile with the backend every time the app returns to the foreground.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -115,6 +141,10 @@ private fun MainFlow(container: AppContainer) {
             onBack = { settingsOpen = false },
         )
     } else {
-        HomeScreen(viewModel, onOpenSettings = { settingsOpen = true })
+        HomeScreen(
+            viewModel,
+            onOpenSettings = { settingsOpen = true },
+            openSessionRequests = container.pendingOpenSession,
+        )
     }
 }

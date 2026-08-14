@@ -3,7 +3,9 @@ package com.alara.hermes
 import android.app.Application
 import com.alara.hermes.data.DraftsRepository
 import com.alara.hermes.data.GatewayMode
+import com.alara.hermes.data.PendingRunsRepository
 import com.alara.hermes.data.SettingsRepository
+import com.alara.hermes.notify.NotificationCenter
 import com.alara.hermes.protocol.ApiServerGateway
 import com.alara.hermes.protocol.GatewayEndpoint
 import com.alara.hermes.protocol.HermesGateway
@@ -19,6 +21,11 @@ class AppContainer(app: Application) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val settings = SettingsRepository(app)
     val drafts = DraftsRepository(app)
+    val pendingRuns = PendingRunsRepository(app)
+    val notifications = NotificationCenter(app, settings, pendingRuns, appScope)
+
+    /** Session key a notification tap asked us to open. */
+    val pendingOpenSession = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
 
     @Volatile private var gateway: HermesGateway? = null
     @Volatile private var gatewayKey: String? = null
@@ -44,10 +51,12 @@ class AppContainer(app: Application) {
         val created = buildGateway(url, token, mode) ?: return null
         gateway = created
         gatewayKey = key
+        notifications.attach(created)
         return created
     }
 
     fun dropGateway() {
+        notifications.detach()
         gateway?.disconnect()
         gateway = null
         gatewayKey = null

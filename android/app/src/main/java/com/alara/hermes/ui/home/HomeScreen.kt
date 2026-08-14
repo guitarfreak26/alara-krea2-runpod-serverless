@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 fun HomeScreen(
     viewModel: com.alara.hermes.ui.HomeViewModel,
     onOpenSettings: () -> Unit,
+    openSessionRequests: kotlinx.coroutines.flow.MutableStateFlow<String?>? = null,
 ) {
     val state by viewModel.state.collectAsState()
     val navigator = rememberListDetailPaneScaffoldNavigator<String>()
@@ -41,6 +42,17 @@ fun HomeScreen(
 
     BackHandler(enabled = navigator.canNavigateBack()) {
         scope.launch { navigator.navigateBack() }
+    }
+
+    // Notification tap -> open that conversation.
+    LaunchedEffect(openSessionRequests) {
+        openSessionRequests?.collect { key ->
+            if (key != null) {
+                viewModel.openSession(key)
+                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
+                openSessionRequests.value = null
+            }
+        }
     }
 
     Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->

@@ -81,6 +81,9 @@ class HermesLiveGateway(
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     override val sessionsChanged: SharedFlow<Unit> = _sessionsChanged
 
+    private val _turnEvents = MutableSharedFlow<TurnEvent>(extraBufferCapacity = 16)
+    override val turnEvents: SharedFlow<TurnEvent> = _turnEvents
+
     /** durable key -> live handle */
     private val handles = ConcurrentHashMap<String, LiveSessionHandle>()
 
@@ -294,6 +297,36 @@ class HermesLiveGateway(
                 return
             }
             _timeline.update { TimelineReducer.reduce(it, event, System.currentTimeMillis()) }
+            when (event.type) {
+                "message.complete" -> {
+                    val payload = event.payload as? JsonObject
+                    if (payload?.strOrNull("status") == "error") {
+                        _turnEvents.tryEmit(
+                            TurnEvent.Failed(sessionKey, payload.strOrNull("error") ?: "turn failed"),
+                        )
+                    } else {
+                        _turnEvents.tryEmit(
+                            TurnEvent.Completed(sessionKey, payload?.strOrNull("text").orEmpty().take(160)),
+                        )
+                    }
+                }
+                "error" -> _turnEvents.tryEmit(
+                    TurnEvent.Failed(
+                        sessionKey,
+                        (event.payload as? JsonObject)?.strOrNull("error") ?: "turn failed",
+                    ),
+                )
+                "approval.request", "clarify.request" -> {
+                    val payload = event.payload as? JsonObject
+                    _turnEvents.tryEmit(
+                        TurnEvent.ApprovalRequested(
+                            sessionKey,
+                            payload?.strOrNull("command") ?: payload?.strOrNull("question")
+                                ?: "The agent needs your input",
+                        ),
+                    )
+                }
+            }
             if (TimelineReducer.isTerminalEvent(event.type)) {
                 ownsTurn = false
             }
@@ -420,6 +453,7 @@ class HermesLiveGateway(
                     )
                 }
                 ownsTurn = true
+                _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId = null))
                 try {
                     // Desktop parity: the ack can be legitimately slow; completion
                     // arrives as message.complete regardless.

@@ -45,6 +45,9 @@ interface HermesGateway {
     /** Fires when session metadata likely changed (titles, running, new turns). */
     val sessionsChanged: SharedFlow<Unit>
 
+    /** Coarse turn lifecycle for notifications (completed / failed / approval). */
+    val turnEvents: SharedFlow<TurnEvent>
+
     suspend fun connect()
     fun disconnect()
 

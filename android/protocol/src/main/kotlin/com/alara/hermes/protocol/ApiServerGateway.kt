@@ -99,6 +99,9 @@ class ApiServerGateway(
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     override val sessionsChanged: SharedFlow<Unit> = _sessionsChanged
 
+    private val _turnEvents = MutableSharedFlow<TurnEvent>(extraBufferCapacity = 16)
+    override val turnEvents: SharedFlow<TurnEvent> = _turnEvents
+
     private val handles = ConcurrentHashMap<String, ApiSessionHandle>()
 
     private fun url(vararg segments: String): HttpUrl {
@@ -269,6 +272,19 @@ class ApiServerGateway(
         _sessionsChanged.tryEmit(Unit)
     }
 
+    /** Pollable status of a run, for reconciling after process death. */
+    data class RunOutcome(val status: String, val output: String?, val error: String?)
+
+    /** GET /v1/runs/{id} — null when the server no longer knows the run. */
+    suspend fun reconcileRun(runId: String): RunOutcome? = runCatching {
+        val status = getJson(url("v1/runs", runId)) as? JsonObject ?: return null
+        RunOutcome(
+            status = (status["status"] as? JsonPrimitive)?.contentOrNull ?: "unknown",
+            output = (status["output"] as? JsonPrimitive)?.contentOrNull,
+            error = (status["error"] as? JsonPrimitive)?.contentOrNull,
+        )
+    }.getOrNull()
+
     inner class ApiSessionHandle(override val sessionKey: String) : SessionHandle {
         override val profileId: String = "default"
 
@@ -357,6 +373,7 @@ class ApiServerGateway(
                 ?: throw HermesRpcException("run response carried no run_id")
             activeRunId = runId
             interrupted = false
+            _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId))
             reduce(WireEvent(type = "message.start", sessionId = sessionKey))
 
             val call = client.newCall(
@@ -446,12 +463,16 @@ class ApiServerGateway(
                         if (str("status") == "failed") put("failed", true)
                     }),
                 )
-                "approval.request" -> reduce(
-                    WireEvent("approval.request", sessionKey, payload = buildJsonObject {
-                        put("command", str("command") ?: str("description") ?: "Approve action?")
-                        obj["choices"]?.let { put("choices", it) }
-                    }),
-                )
+                "approval.request" -> {
+                    val prompt = str("command") ?: str("description") ?: "Approve action?"
+                    reduce(
+                        WireEvent("approval.request", sessionKey, payload = buildJsonObject {
+                            put("command", prompt)
+                            obj["choices"]?.let { put("choices", it) }
+                        }),
+                    )
+                    _turnEvents.tryEmit(TurnEvent.ApprovalRequested(sessionKey, prompt))
+                }
                 "approval.responded" -> _timeline.update { state ->
                     state.copy(entries = state.entries.map { entry ->
                         if (entry is ChatEntry.Approval && !entry.resolved) entry.copy(resolved = true) else entry
@@ -462,12 +483,14 @@ class ApiServerGateway(
                         put("text", str("output").orEmpty())
                         put("status", "complete")
                     }))
+                    _turnEvents.tryEmit(TurnEvent.Completed(sessionKey, str("output").orEmpty().take(160)))
                     afterTurn()
                 }
                 "run.failed" -> {
                     reduce(WireEvent("error", sessionKey, payload = buildJsonObject {
                         put("error", str("error") ?: "run failed")
                     }))
+                    _turnEvents.tryEmit(TurnEvent.Failed(sessionKey, str("error") ?: "run failed"))
                     afterTurn()
                 }
                 "run.cancelled" -> {
@@ -482,17 +505,22 @@ class ApiServerGateway(
             val state = (status?.get("status") as? JsonPrimitive)?.contentOrNull
             val output = (status?.get("output") as? JsonPrimitive)?.contentOrNull
             when (state) {
-                "completed" -> reduce(
-                    WireEvent("message.complete", sessionKey, payload = buildJsonObject {
-                        put("text", output.orEmpty())
-                        put("status", "complete")
-                    }),
-                )
-                "failed" -> reduce(
-                    WireEvent("error", sessionKey, payload = buildJsonObject {
-                        put("error", (status?.get("error") as? JsonPrimitive)?.contentOrNull ?: "run failed")
-                    }),
-                )
+                "completed" -> {
+                    reduce(
+                        WireEvent("message.complete", sessionKey, payload = buildJsonObject {
+                            put("text", output.orEmpty())
+                            put("status", "complete")
+                        }),
+                    )
+                    _turnEvents.tryEmit(TurnEvent.Completed(sessionKey, output.orEmpty().take(160)))
+                }
+                "failed" -> {
+                    val error = (status?.get("error") as? JsonPrimitive)?.contentOrNull ?: "run failed"
+                    reduce(
+                        WireEvent("error", sessionKey, payload = buildJsonObject { put("error", error) }),
+                    )
+                    _turnEvents.tryEmit(TurnEvent.Failed(sessionKey, error))
+                }
                 else -> reduce(WireEvent("turn.end", sessionKey))
             }
             afterTurn()
@@ -539,6 +567,7 @@ class ApiServerGateway(
             )
             interrupted = false
             activeCall = call
+            _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId = null))
             streamJob = scope.launch(Dispatchers.IO) {
                 try {
                     call.execute().use { response ->
@@ -646,8 +675,16 @@ class ApiServerGateway(
                         payload = buildJsonObject { put("error", error) },
                     ),
                 )
+                _turnEvents.tryEmit(TurnEvent.Failed(sessionKey, error))
             } else {
                 reduce(WireEvent(type = "turn.end", sessionId = sessionKey))
+                // A user-initiated stop is not a completion worth announcing.
+                if (!interrupted) {
+                    val preview = (_timeline.value.entries.lastOrNull {
+                        it is ChatEntry.Message && it.role == Role.ASSISTANT
+                    } as? ChatEntry.Message)?.text.orEmpty().take(160)
+                    _turnEvents.tryEmit(TurnEvent.Completed(sessionKey, preview))
+                }
             }
             afterTurn()
         }

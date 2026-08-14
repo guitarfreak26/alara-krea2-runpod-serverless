@@ -54,6 +54,7 @@ class SettingsRepository(
         val Onboarded = booleanPreferencesKey("onboarded")
         val ActiveFirst = booleanPreferencesKey("sessions_active_first")
         val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
+        val NotificationContent = booleanPreferencesKey("notification_content")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -89,6 +90,14 @@ class SettingsRepository(
 
     suspend fun setShowToolActivity(enabled: Boolean) {
         context.dataStore.edit { it[Keys.ShowToolActivity] = enabled }
+    }
+
+    /** Message content in notifications — OFF by default (lock-screen privacy). */
+    val notificationContentEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.NotificationContent] ?: false }
+
+    suspend fun setNotificationContentEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.NotificationContent] = enabled }
     }
 
     suspend fun currentServer(): ServerSettings = serverSettings.first()

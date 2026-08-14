@@ -98,32 +98,46 @@ fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
             }
         }
         Role.ASSISTANT -> {
-            Box(
+            // Incoming bubble, mirrored corner from the user's. End margin keeps
+            // it visually "received" without wasting width for long content.
+            Row(
                 Modifier
                     .fillMaxWidth()
-                    .combinedClickable(onClick = {}, onLongClick = { actionsOpen = true }),
+                    .padding(end = 32.dp),
             ) {
-                Column {
-                    Markdown(
-                        content = entry.text.ifEmpty { if (entry.streaming) "…" else "" },
-                        components = markdownComponents(
-                            codeBlock = codeBlockWithCopy,
-                            codeFence = codeFenceWithCopy,
-                        ),
-                    )
-                    if (entry.streaming && entry.text.isNotEmpty()) {
-                        Text(
-                            "▍",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.primary,
+                Box(
+                    Modifier
+                        .background(
+                            com.alara.hermes.ui.theme.HermesColors.BubbleIncoming,
+                            RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp, bottomStart = 6.dp, bottomEnd = 18.dp),
                         )
-                    }
-                    if (!entry.streaming) {
-                        MediaGallery(
-                            links = extractMediaLinks(entry.text),
-                            gatewayHost = mediaAuth?.host,
-                            authHeader = mediaAuth?.header,
-                        )
+                        .combinedClickable(onClick = {}, onLongClick = { actionsOpen = true })
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Column {
+                        if (entry.streaming) {
+                            // Markdown re-parses the whole document per token and
+                            // makes streaming stutter; render plain text with an
+                            // inline caret and switch to markdown on completion.
+                            Text(
+                                if (entry.text.isEmpty()) "…" else entry.text + " ▍",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        } else {
+                            Markdown(
+                                content = entry.text,
+                                components = markdownComponents(
+                                    codeBlock = codeBlockWithCopy,
+                                    codeFence = codeFenceWithCopy,
+                                ),
+                            )
+                            MediaGallery(
+                                links = extractMediaLinks(entry.text),
+                                gatewayHost = mediaAuth?.host,
+                                authHeader = mediaAuth?.header,
+                            )
+                        }
                     }
                 }
             }

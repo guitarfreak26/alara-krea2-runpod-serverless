@@ -162,6 +162,20 @@ fun SettingsScreen(
             )
 
             SectionDivider()
+            SectionLabel("Notifications")
+            val notifContent by container.settings.notificationContentEnabled.collectAsState(initial = false)
+            SwitchRow(
+                title = "Show message content",
+                subtitle = "Off keeps task details away from the lock screen",
+                checked = notifContent,
+                onChecked = { scope.launch { container.settings.setNotificationContentEnabled(it) } },
+            )
+            SettingRow(
+                title = "Per-type control",
+                subtitle = "Completions, approvals and failures use separate Android channels — long-press a notification to tune them",
+            )
+
+            SectionDivider()
             SectionLabel("Storage")
             SettingRow(
                 title = "Clear drafts",
