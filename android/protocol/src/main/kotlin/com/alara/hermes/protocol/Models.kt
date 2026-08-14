@@ -143,6 +143,40 @@ data class AutomationInfo(
     val lastStatus: String? = null,
 )
 
+@Serializable
+data class UsageWindow(
+    val label: String,
+    /** 0-100; null = provider didn't report. */
+    val usedPercent: Double? = null,
+    val resetAtMs: Long? = null,
+    val detail: String? = null,
+)
+
+@Serializable
+data class AccountUsage(
+    val provider: String,
+    val plan: String? = null,
+    val windows: List<UsageWindow> = emptyList(),
+    val details: List<String> = emptyList(),
+    val unavailableReason: String? = null,
+)
+
+@Serializable
+data class TokenTotals(
+    val inputTokens: Long,
+    val outputTokens: Long,
+    val estimatedCostUsd: Double?,
+    val sessionCount: Int,
+)
+
+@Serializable
+data class UsageSummary(
+    /** Sessions active in the last 24h. */
+    val today: TokenTotals,
+    /** Everything the session list returns. */
+    val allListed: TokenTotals,
+)
+
 sealed interface ConnectionState {
     data object Disconnected : ConnectionState
     data object Connecting : ConnectionState

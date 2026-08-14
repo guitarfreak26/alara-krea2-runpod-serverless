@@ -422,6 +422,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         return runCatching { gw.deleteAutomation(id) }
     }
 
+    suspend fun accountUsage(): Result<List<com.alara.hermes.protocol.AccountUsage>> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.accountUsage() }
+    }
+
+    suspend fun usageSummary(): Result<com.alara.hermes.protocol.UsageSummary> {
+        val gw = gateway ?: return Result.failure(IllegalStateException("not connected"))
+        return runCatching { gw.usageSummary(_state.value.activeProfile) }
+    }
+
     fun cleanError(message: String?): String = clean(message)
 
     fun dismissNotice() {

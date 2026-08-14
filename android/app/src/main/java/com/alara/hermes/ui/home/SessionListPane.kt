@@ -182,6 +182,10 @@ fun SessionListPane(
                                 onOpenOverlay("automations")
                             })
                         }
+                        DropdownMenuItem(text = { Text("Usage") }, onClick = {
+                            menuOpen = false
+                            onOpenOverlay("usage")
+                        })
                         DropdownMenuItem(text = { Text("Settings") }, onClick = {
                             menuOpen = false
                             onOpenOverlay("settings")

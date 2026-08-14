@@ -77,4 +77,14 @@ interface HermesGateway {
     suspend fun setAutomationPaused(id: String, paused: Boolean)
     suspend fun runAutomation(id: String)
     suspend fun deleteAutomation(id: String)
+
+    /**
+     * Provider allowance windows (Codex/Claude limits, credits), as collected
+     * by the server's account-usage machinery. Throws when the deployment has
+     * no usage endpoint yet.
+     */
+    suspend fun accountUsage(): List<AccountUsage>
+
+    /** Token/cost totals aggregated from the stored session rows. */
+    suspend fun usageSummary(profileId: String?): UsageSummary
 }

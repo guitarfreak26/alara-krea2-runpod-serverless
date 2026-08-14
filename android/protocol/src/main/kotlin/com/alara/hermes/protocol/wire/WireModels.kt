@@ -60,6 +60,10 @@ data class StoredSession(
     @SerialName("message_count") val messageCount: Int? = null,
     @SerialName("started_at") val startedAt: Double? = null,
     @SerialName("last_active") val lastActive: Double? = null,
+    @SerialName("input_tokens") val inputTokens: Long? = null,
+    @SerialName("output_tokens") val outputTokens: Long? = null,
+    @SerialName("estimated_cost_usd") val estimatedCostUsd: Double? = null,
+    @SerialName("actual_cost_usd") val actualCostUsd: Double? = null,
 ) {
     /** Durable identity used for resume + REST history. */
     val durableId: String? get() = sessionId ?: id

@@ -274,6 +274,26 @@ class HermesLiveGateway(
         rest.deleteCronJob(id)
     }
 
+    override suspend fun accountUsage(): List<AccountUsage> {
+        throw HermesRpcException("provider allowance is not exposed on this surface yet")
+    }
+
+    override suspend fun usageSummary(profileId: String?): UsageSummary {
+        val rows = rest.listSessions(profileId, archived = "include")
+        val dayAgo = System.currentTimeMillis() / 1000.0 - 24 * 3600
+        fun totals(sessions: List<com.alara.hermes.protocol.wire.StoredSession>) = TokenTotals(
+            inputTokens = sessions.sumOf { it.inputTokens ?: 0L },
+            outputTokens = sessions.sumOf { it.outputTokens ?: 0L },
+            estimatedCostUsd = sessions.mapNotNull { it.actualCostUsd ?: it.estimatedCostUsd }
+                .takeIf { it.isNotEmpty() }?.sum(),
+            sessionCount = sessions.size,
+        )
+        return UsageSummary(
+            today = totals(rows.filter { (it.lastActive ?: it.startedAt ?: 0.0) >= dayAgo }),
+            allListed = totals(rows),
+        )
+    }
+
     override suspend fun setPinned(sessionKey: String, pinned: Boolean) {
         rest.patchSession(sessionKey, handles[sessionKey]?.profileId, pinned = pinned)
         _sessionsChanged.tryEmit(Unit)

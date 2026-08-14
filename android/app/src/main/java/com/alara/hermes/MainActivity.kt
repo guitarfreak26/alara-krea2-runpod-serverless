@@ -144,6 +144,7 @@ private fun MainFlow(container: AppContainer) {
         }
         "skills" -> com.alara.hermes.ui.manage.SkillsScreen(viewModel, onBack = { overlay = null })
         "automations" -> com.alara.hermes.ui.manage.AutomationsScreen(viewModel, onBack = { overlay = null })
+        "usage" -> com.alara.hermes.ui.manage.UsageScreen(viewModel, onBack = { overlay = null })
         else -> HomeScreen(
             viewModel,
             onOpenOverlay = { overlay = it },

@@ -468,6 +468,67 @@ class ApiServerGateway(
         }
     }
 
+    /**
+     * Provider allowance bars. Contract (proposed to upstream; the app
+     * degrades cleanly until the endpoint exists): GET /v1/usage ->
+     * {"providers":[{"provider","plan","unavailable_reason",
+     *   "windows":[{"label","used_percent","reset_at","detail"}],
+     *   "details":["..."]}]}
+     * — the serialized form of agent/account_usage.py AccountUsageSnapshot.
+     */
+    override suspend fun accountUsage(): List<AccountUsage> {
+        val payload = getJson(url("v1/usage"))
+        val rows = when (payload) {
+            is JsonArray -> payload
+            is JsonObject -> (payload["providers"] ?: payload["snapshots"] ?: payload["data"]) as? JsonArray
+                ?: JsonArray(emptyList())
+            else -> JsonArray(emptyList())
+        }
+        return rows.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            val provider = str("provider") ?: str("title") ?: return@mapNotNull null
+            val windows = (obj["windows"] as? JsonArray).orEmpty().mapNotNull { win ->
+                val w = win as? JsonObject ?: return@mapNotNull null
+                fun wstr(key: String) = (w[key] as? JsonPrimitive)?.contentOrNull
+                UsageWindow(
+                    label = wstr("label") ?: "window",
+                    usedPercent = wstr("used_percent")?.toDoubleOrNull()
+                        ?: wstr("percent_used")?.toDoubleOrNull(),
+                    resetAtMs = wstr("reset_at")?.toDoubleOrNull()?.let { (it * 1000).toLong() },
+                    detail = wstr("detail"),
+                )
+            }
+            AccountUsage(
+                provider = provider,
+                plan = str("plan"),
+                windows = windows,
+                details = (obj["details"] as? JsonArray).orEmpty()
+                    .mapNotNull { (it as? JsonPrimitive)?.contentOrNull },
+                unavailableReason = str("unavailable_reason"),
+            )
+        }
+    }
+
+    override suspend fun usageSummary(profileId: String?): UsageSummary {
+        val payload = getJson(url("api/sessions").newBuilder().addQueryParameter("limit", "200").build())
+        val rows = dataRows(payload).mapNotNull { row ->
+            runCatching { json.decodeFromJsonElement(StoredSession.serializer(), row) }.getOrNull()
+        }
+        val dayAgo = System.currentTimeMillis() / 1000.0 - 24 * 3600
+        fun totals(sessions: List<StoredSession>) = TokenTotals(
+            inputTokens = sessions.sumOf { it.inputTokens ?: 0L },
+            outputTokens = sessions.sumOf { it.outputTokens ?: 0L },
+            estimatedCostUsd = sessions.mapNotNull { it.actualCostUsd ?: it.estimatedCostUsd }
+                .takeIf { it.isNotEmpty() }?.sum(),
+            sessionCount = sessions.size,
+        )
+        return UsageSummary(
+            today = totals(rows.filter { (it.lastActive ?: it.startedAt ?: 0.0) >= dayAgo }),
+            allListed = totals(rows),
+        )
+    }
+
     /** Pollable status of a run, for reconciling after process death. */
     data class RunOutcome(val status: String, val output: String?, val error: String?)
 
