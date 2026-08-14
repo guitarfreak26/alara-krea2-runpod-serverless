@@ -75,6 +75,10 @@ dependencies {
 
     implementation(libs.markdown.m3)
     implementation(libs.markdown.code)
+    implementation(libs.coil.compose)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.datasource.okhttp)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

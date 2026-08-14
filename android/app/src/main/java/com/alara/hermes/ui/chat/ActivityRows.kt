@@ -15,11 +15,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,8 +80,18 @@ fun ToolRow(entry: ChatEntry.ToolRun) {
                 )
             }
             Spacer(Modifier.width(8.dp))
+            val toolIcon = when {
+                entry.tool.contains("subagent") -> Icons.Filled.AccountTree
+                entry.tool.contains("bash") || entry.tool.contains("terminal") ||
+                    entry.tool.contains("shell") -> Icons.Filled.Terminal
+                entry.tool.contains("read") || entry.tool.contains("file") -> Icons.Filled.Description
+                entry.tool.contains("edit") || entry.tool.contains("write") -> Icons.Filled.Edit
+                entry.tool.contains("search") || entry.tool.contains("web") -> Icons.Filled.Search
+                entry.tool.contains("browser") -> Icons.Filled.Language
+                else -> Icons.Filled.Terminal
+            }
             Icon(
-                Icons.Filled.Terminal,
+                toolIcon,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(15.dp),

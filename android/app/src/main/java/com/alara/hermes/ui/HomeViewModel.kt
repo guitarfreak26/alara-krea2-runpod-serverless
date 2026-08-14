@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -52,6 +53,18 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     val state: StateFlow<HomeUiState> = _state
 
     val appearance = container.settings.appearance
+        .stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Bearer context for loading private media from the gateway host only. */
+    val mediaAuth = container.settings.serverSettings
+        .map { server ->
+            val host = com.alara.hermes.protocol.wire.HermesRestClient.parseBaseUrl(server.url)?.host
+            if (host != null && server.token.isNotBlank()) {
+                com.alara.hermes.ui.chat.MediaAuth(host, "Bearer ${server.token.trim()}")
+            } else {
+                null
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     private var gateway: HermesGateway? = null
@@ -178,12 +191,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(chat = ChatUiState(), models = emptyList()) }
     }
 
-    fun send(text: String) {
+    fun send(text: String, attachments: List<com.alara.hermes.protocol.OutgoingAttachment> = emptyList()) {
         val h = handle ?: return
-        if (text.isBlank()) return
+        if (text.isBlank() && attachments.isEmpty()) return
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }
         viewModelScope.launch {
-            runCatching { h.send(text) }
+            runCatching { h.send(text, attachments) }
                 .onFailure { t ->
                     _state.update {
                         it.copy(chat = it.chat.copy(error = clean("Send failed: ${t.message}. Not re-sent automatically.")))

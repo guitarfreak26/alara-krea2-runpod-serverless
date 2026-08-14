@@ -94,6 +94,16 @@ data class Attachment(
     val sizeBytes: Long? = null,
 )
 
+/** A file staged on the device for the next send. */
+data class OutgoingAttachment(
+    val name: String,
+    val mimeType: String,
+    val dataBase64: String,
+) {
+    val isImage: Boolean get() = mimeType.startsWith("image/")
+    val dataUrl: String get() = "data:$mimeType;base64,$dataBase64"
+}
+
 /** Session-level agent configuration surfaced in the chat header / bottom sheet. */
 @Serializable
 data class SessionConfig(

@@ -378,10 +378,35 @@ class HermesLiveGateway(
             }
         }
 
-        override suspend fun send(text: String) {
+        override suspend fun send(text: String, attachments: List<OutgoingAttachment>) {
             sendMutex.withLock {
                 val runtime = runtimeId ?: run { rebind(); runtimeId }
                     ?: throw HermesRpcException("session is not bound")
+                // Stage attachments first; non-image files contribute ref_text
+                // lines the prompt must carry (they are not structured fields
+                // of prompt.submit on this surface).
+                val refLines = mutableListOf<String>()
+                attachments.forEach { attachment ->
+                    if (attachment.isImage) {
+                        socket.request("image.attach_bytes", buildJsonObject {
+                            put("session_id", runtime)
+                            put("content_base64", attachment.dataBase64)
+                            put("filename", attachment.name)
+                        }, timeoutMs = 120_000)
+                    } else {
+                        val result = socket.request("file.attach", buildJsonObject {
+                            put("session_id", runtime)
+                            put("name", attachment.name)
+                            put("data_url", attachment.dataUrl)
+                        }, timeoutMs = 120_000)
+                        (result as? JsonObject)?.strOrNull("ref_text")
+                            ?.takeIf { it.isNotBlank() }
+                            ?.let { refLines += it }
+                    }
+                }
+                val fullText = if (refLines.isEmpty()) text else {
+                    (refLines + text).joinToString("\n")
+                }
                 // Optimistic local echo; replaced by authoritative history on next rehydrate.
                 _timeline.update { state ->
                     state.copy(
@@ -402,7 +427,7 @@ class HermesLiveGateway(
                         "prompt.submit",
                         buildJsonObject {
                             put("session_id", runtime)
-                            put("text", text)
+                            put("text", fullText)
                         },
                         timeoutMs = 1_800_000,
                     )

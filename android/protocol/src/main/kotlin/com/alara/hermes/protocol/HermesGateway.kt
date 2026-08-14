@@ -14,11 +14,12 @@ interface SessionHandle {
     val config: StateFlow<SessionConfig>
 
     /**
-     * Submit a prompt. The suspend returns on gateway ack; completion arrives
-     * through [timeline]. Implementations must never auto-resubmit an
-     * ambiguous send — callers re-sync and let the user retry.
+     * Submit a prompt with optional attachments. The suspend returns on
+     * gateway ack; completion arrives through [timeline]. Implementations
+     * must never auto-resubmit an ambiguous send — callers re-sync and let
+     * the user retry.
      */
-    suspend fun send(text: String)
+    suspend fun send(text: String, attachments: List<OutgoingAttachment> = emptyList())
     suspend fun interrupt()
     suspend fun respondApproval(entryId: EntryId, choice: String)
     suspend fun setModel(model: String, provider: String?)

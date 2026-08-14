@@ -94,13 +94,14 @@ class ApiServerGatewayTest {
             append("\n\n")
             append("data: [DONE]\n\n")
         }
+        // send() probes capabilities on first use, before opening the stream.
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
         server.enqueue(
             MockResponse()
                 .setHeader("Content-Type", "text/event-stream")
                 .setBody(sse),
         )
-        // finishTurn refresh: capabilities probe (first use), then transcript.
-        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        // finishTurn refresh fetches the authoritative transcript.
         server.enqueue(
             MockResponse().setBody(
                 """{"data":[
@@ -126,6 +127,7 @@ class ApiServerGatewayTest {
             }
         }
 
+        assertEquals("/v1/capabilities", server.takeRequest().path)
         val chatRequest = server.takeRequest()
         assertEquals("/v1/chat/completions", chatRequest.path)
         assertEquals(handle.sessionKey, chatRequest.getHeader("X-Hermes-Session-Id"))

@@ -12,8 +12,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -30,7 +32,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.alara.hermes.protocol.ChatEntry
 import com.alara.hermes.protocol.Role
+import com.alara.hermes.util.extractMediaLinks
+import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
+
+/** Auth context for loading private media from the gateway host. */
+data class MediaAuth(val host: String, val header: String)
 
 /**
  * Chat bubble. User turns get a tinted right-aligned bubble; assistant turns
@@ -38,7 +45,7 @@ import com.mikepenz.markdown.m3.Markdown
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MessageBubble(entry: ChatEntry.Message) {
+fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
     val context = LocalContext.current
     var actionsOpen by remember { mutableStateOf(false) }
 
@@ -61,11 +68,32 @@ fun MessageBubble(entry: ChatEntry.Message) {
                         .combinedClickable(onClick = {}, onLongClick = { actionsOpen = true })
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
-                    Text(
-                        entry.text,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onBackground,
-                    )
+                    Column {
+                        if (entry.attachments.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.padding(bottom = 6.dp),
+                            ) {
+                                entry.attachments.take(4).forEach { attachment ->
+                                    coil.compose.AsyncImage(
+                                        model = attachment.url,
+                                        contentDescription = attachment.name,
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                        modifier = Modifier
+                                            .padding(end = 6.dp)
+                                            .size(72.dp)
+                                            .clip(RoundedCornerShape(8.dp)),
+                                    )
+                                }
+                            }
+                        }
+                        if (entry.text.isNotBlank()) {
+                            Text(
+                                entry.text,
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -78,12 +106,23 @@ fun MessageBubble(entry: ChatEntry.Message) {
                 Column {
                     Markdown(
                         content = entry.text.ifEmpty { if (entry.streaming) "…" else "" },
+                        components = markdownComponents(
+                            codeBlock = codeBlockWithCopy,
+                            codeFence = codeFenceWithCopy,
+                        ),
                     )
                     if (entry.streaming && entry.text.isNotEmpty()) {
                         Text(
                             "▍",
                             style = MaterialTheme.typography.bodyLarge,
                             color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    if (!entry.streaming) {
+                        MediaGallery(
+                            links = extractMediaLinks(entry.text),
+                            gatewayHost = mediaAuth?.host,
+                            authHeader = mediaAuth?.header,
                         )
                     }
                 }

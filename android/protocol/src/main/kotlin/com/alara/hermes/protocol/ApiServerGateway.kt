@@ -83,13 +83,18 @@ class ApiServerGateway(
     data class ServerCapabilities(
         val sessionResources: Boolean,
         val sessionUpdate: Boolean,
+        val runSubmission: Boolean = false,
         val model: String? = null,
     )
 
     @Volatile private var capabilities: ServerCapabilities? = null
 
     override val features: GatewayFeatures
-        get() = GatewayFeatures.API_SERVER.copy(rename = capabilities?.sessionUpdate == true)
+        get() = GatewayFeatures.API_SERVER.copy(
+            rename = capabilities?.sessionUpdate == true,
+            // Structured approvals exist only on the /v1/runs stream.
+            approvals = capabilities?.runSubmission == true,
+        )
 
     private val _sessionsChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     override val sessionsChanged: SharedFlow<Unit> = _sessionsChanged
@@ -141,6 +146,9 @@ class ApiServerGateway(
                 ?.contentOrNull?.toBooleanStrictOrNull()
                 ?: (endpoints?.get("sessions") != null),
             sessionUpdate = endpoints?.get("session_update") != null,
+            runSubmission = (features?.get("run_submission") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull()
+                ?: (endpoints?.get("runs") != null),
             model = (caps?.get("model") as? JsonPrimitive)?.contentOrNull,
         )
         capabilities = parsed
@@ -273,6 +281,7 @@ class ApiServerGateway(
         private var streamJob: Job? = null
         @Volatile private var activeCall: okhttp3.Call? = null
         @Volatile private var interrupted = false
+        @Volatile private var activeRunId: String? = null
         private val seenTools = ConcurrentHashMap.newKeySet<String>()
 
         override suspend fun refresh() {
@@ -290,9 +299,15 @@ class ApiServerGateway(
             }
         }
 
-        override suspend fun send(text: String) {
+        override suspend fun send(text: String, attachments: List<OutgoingAttachment>) {
             if (streamJob?.isActive == true) {
                 throw HermesRpcException("a turn is already streaming; stop it first")
+            }
+            if (capabilities == null) connect()
+            attachments.firstOrNull { !it.isImage }?.let {
+                throw HermesRpcException(
+                    "only image attachments are supported on this surface (got ${it.mimeType})",
+                )
             }
             _timeline.update { state ->
                 state.copy(
@@ -302,9 +317,190 @@ class ApiServerGateway(
                         timestampMs = System.currentTimeMillis(),
                         role = Role.USER,
                         text = text,
+                        attachments = attachments.map {
+                            Attachment(name = it.name, mimeType = it.mimeType, url = it.dataUrl)
+                        },
                     ),
                 )
             }
+            // /v1/runs gives structured events (tools, approvals) but takes
+            // text-only input; image-bearing turns ride chat completions.
+            if (capabilities?.runSubmission == true && attachments.isEmpty()) {
+                sendViaRun(text)
+            } else {
+                sendViaCompletions(text, attachments)
+            }
+        }
+
+        // ---- structured run turn (/v1/runs) --------------------------------
+
+        private suspend fun sendViaRun(text: String) {
+            val body = buildJsonObject {
+                put("input", text)
+                put("session_id", sessionKey)
+                _config.value.model?.let { put("model", it) }
+            }
+            val started = withContext(Dispatchers.IO) {
+                client.newCall(
+                    request(url("v1/runs"))
+                        .post(body.toString().toRequestBody(jsonMedia)).build(),
+                ).execute().use { response ->
+                    val payload = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        throw HermesHttpException(response.code, "run submit failed: HTTP ${response.code}")
+                    }
+                    json.parseToJsonElement(payload) as? JsonObject
+                        ?: throw HermesRpcException("malformed run response")
+                }
+            }
+            val runId = (started["run_id"] as? JsonPrimitive)?.contentOrNull
+                ?: throw HermesRpcException("run response carried no run_id")
+            activeRunId = runId
+            interrupted = false
+            reduce(WireEvent(type = "message.start", sessionId = sessionKey))
+
+            val call = client.newCall(
+                request(url("v1/runs", runId, "events"))
+                    .header("Accept", "text/event-stream")
+                    .get().build(),
+            )
+            activeCall = call
+            streamJob = scope.launch(Dispatchers.IO) {
+                try {
+                    call.execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw HermesHttpException(response.code, "run events failed: HTTP ${response.code}")
+                        }
+                        val source = response.body?.source()
+                            ?: throw HermesRpcException("empty run stream")
+                        val buffer = StringBuilder()
+                        while (!source.exhausted()) {
+                            val line = source.readUtf8Line() ?: break
+                            when {
+                                line.isEmpty() -> {
+                                    if (buffer.isNotEmpty()) dispatchRunEvent(buffer.toString())
+                                    buffer.setLength(0)
+                                }
+                                line.startsWith(":") -> Unit // keepalive
+                                line.startsWith("data:") -> buffer.append(line.removePrefix("data:").trim())
+                            }
+                        }
+                        if (buffer.isNotEmpty()) dispatchRunEvent(buffer.toString())
+                    }
+                    // Stream may close without a terminal frame (e.g. proxy drop):
+                    // settle from the pollable run status rather than guessing.
+                    if (_timeline.value.running) settleFromRunStatus(runId)
+                } catch (t: Throwable) {
+                    if (interrupted) {
+                        finishTurn(error = null)
+                    } else if (_timeline.value.running) {
+                        runCatching { settleFromRunStatus(runId) }
+                            .onFailure { finishTurn(error = t.message ?: "run stream failed") }
+                    }
+                } finally {
+                    activeCall = null
+                    activeRunId = null
+                }
+            }
+        }
+
+        /** Map one /v1/runs SSE frame onto the shared timeline reducer. */
+        private fun dispatchRunEvent(data: String) {
+            val obj = runCatching { json.parseToJsonElement(data) }.getOrNull() as? JsonObject ?: return
+            val kind = (obj["event"] as? JsonPrimitive)?.contentOrNull ?: return
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            when (kind) {
+                "message.delta" -> str("delta")?.let { delta ->
+                    reduce(WireEvent("message.delta", sessionKey, payload = buildJsonObject { put("text", delta) }))
+                }
+                "reasoning.available" -> reduce(
+                    WireEvent("reasoning.available", sessionKey, payload = buildJsonObject {
+                        put("text", str("text").orEmpty())
+                    }),
+                )
+                "tool.started" -> reduce(
+                    WireEvent("tool.start", sessionKey, payload = buildJsonObject {
+                        put("name", str("tool") ?: "tool")
+                        str("preview")?.let { put("context", it) }
+                    }),
+                )
+                "tool.completed" -> reduce(
+                    WireEvent("tool.complete", sessionKey, payload = buildJsonObject {
+                        put("name", str("tool") ?: "tool")
+                        obj["duration"]?.let { put("duration_s", it) }
+                        if ((obj["error"] as? JsonPrimitive)?.contentOrNull == "true") put("failed", true)
+                    }),
+                )
+                "subagent.start" -> reduce(
+                    WireEvent("tool.start", sessionKey, payload = buildJsonObject {
+                        put("tool_id", str("subagent_id") ?: "subagent")
+                        put("name", "subagent")
+                        put("context", listOfNotNull(str("goal"), str("model")).joinToString("  ·  "))
+                    }),
+                )
+                "subagent.complete" -> reduce(
+                    WireEvent("tool.complete", sessionKey, payload = buildJsonObject {
+                        put("tool_id", str("subagent_id") ?: "subagent")
+                        put("name", "subagent")
+                        str("summary")?.let { put("summary", it) }
+                        if (str("status") == "failed") put("failed", true)
+                    }),
+                )
+                "approval.request" -> reduce(
+                    WireEvent("approval.request", sessionKey, payload = buildJsonObject {
+                        put("command", str("command") ?: str("description") ?: "Approve action?")
+                        obj["choices"]?.let { put("choices", it) }
+                    }),
+                )
+                "approval.responded" -> _timeline.update { state ->
+                    state.copy(entries = state.entries.map { entry ->
+                        if (entry is ChatEntry.Approval && !entry.resolved) entry.copy(resolved = true) else entry
+                    })
+                }
+                "run.completed" -> {
+                    reduce(WireEvent("message.complete", sessionKey, payload = buildJsonObject {
+                        put("text", str("output").orEmpty())
+                        put("status", "complete")
+                    }))
+                    afterTurn()
+                }
+                "run.failed" -> {
+                    reduce(WireEvent("error", sessionKey, payload = buildJsonObject {
+                        put("error", str("error") ?: "run failed")
+                    }))
+                    afterTurn()
+                }
+                "run.cancelled" -> {
+                    reduce(WireEvent("turn.end", sessionKey))
+                    afterTurn()
+                }
+            }
+        }
+
+        private suspend fun settleFromRunStatus(runId: String) {
+            val status = getJson(url("v1/runs", runId)) as? JsonObject
+            val state = (status?.get("status") as? JsonPrimitive)?.contentOrNull
+            val output = (status?.get("output") as? JsonPrimitive)?.contentOrNull
+            when (state) {
+                "completed" -> reduce(
+                    WireEvent("message.complete", sessionKey, payload = buildJsonObject {
+                        put("text", output.orEmpty())
+                        put("status", "complete")
+                    }),
+                )
+                "failed" -> reduce(
+                    WireEvent("error", sessionKey, payload = buildJsonObject {
+                        put("error", (status?.get("error") as? JsonPrimitive)?.contentOrNull ?: "run failed")
+                    }),
+                )
+                else -> reduce(WireEvent("turn.end", sessionKey))
+            }
+            afterTurn()
+        }
+
+        // ---- OpenAI-compatible completions turn ----------------------------
+
+        private fun sendViaCompletions(text: String, attachments: List<OutgoingAttachment>) {
             val body = buildJsonObject {
                 put("model", _config.value.model ?: "hermes-agent")
                 put("stream", true)
@@ -312,7 +508,24 @@ class ApiServerGateway(
                     add(
                         buildJsonObject {
                             put("role", "user")
-                            put("content", text)
+                            if (attachments.isEmpty()) {
+                                put("content", text)
+                            } else {
+                                putJsonArray("content") {
+                                    add(buildJsonObject {
+                                        put("type", "text")
+                                        put("text", text)
+                                    })
+                                    attachments.forEach { attachment ->
+                                        add(buildJsonObject {
+                                            put("type", "image_url")
+                                            put("image_url", buildJsonObject {
+                                                put("url", attachment.dataUrl)
+                                            })
+                                        })
+                                    }
+                                }
+                            }
                         },
                     )
                 }
@@ -326,7 +539,7 @@ class ApiServerGateway(
             )
             interrupted = false
             activeCall = call
-            val job = scope.launch(Dispatchers.IO) {
+            streamJob = scope.launch(Dispatchers.IO) {
                 try {
                     call.execute().use { response ->
                         if (!response.isSuccessful) {
@@ -368,7 +581,6 @@ class ApiServerGateway(
                     activeCall = null
                 }
             }
-            streamJob = job
         }
 
         private fun dispatchSse(eventName: String?, data: String) {
@@ -437,6 +649,11 @@ class ApiServerGateway(
             } else {
                 reduce(WireEvent(type = "turn.end", sessionId = sessionKey))
             }
+            afterTurn()
+        }
+
+        /** Post-terminal bookkeeping shared by both turn engines. */
+        private fun afterTurn() {
             seenTools.clear()
             _sessionsChanged.tryEmit(Unit)
             // Converge with the authoritative transcript once the server settles.
@@ -444,15 +661,43 @@ class ApiServerGateway(
         }
 
         override suspend fun interrupt() {
-            // No interrupt endpoint on this surface: dropping the SSE
-            // connection is the documented interrupt signal.
+            val runId = activeRunId
+            if (runId != null) {
+                // Structured stop; the run stream then delivers run.cancelled.
+                runCatching {
+                    withContext(Dispatchers.IO) {
+                        client.newCall(
+                            request(url("v1/runs", runId, "stop"))
+                                .post("{}".toRequestBody(jsonMedia)).build(),
+                        ).execute().close()
+                    }
+                }.onFailure {
+                    interrupted = true
+                    activeCall?.cancel()
+                }
+                return
+            }
+            // Completions path: dropping the SSE connection IS the interrupt.
             interrupted = true
             activeCall?.cancel()
             streamJob = null
         }
 
         override suspend fun respondApproval(entryId: EntryId, choice: String) {
-            throw HermesRpcException("approvals are not delivered on the API server surface")
+            val runId = activeRunId
+                ?: throw HermesRpcException("no active run is waiting for approval")
+            val body = buildJsonObject { put("choice", choice) }
+            withContext(Dispatchers.IO) {
+                client.newCall(
+                    request(url("v1/runs", runId, "approval"))
+                        .post(body.toString().toRequestBody(jsonMedia)).build(),
+                ).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        throw HermesHttpException(response.code, "approval failed: HTTP ${response.code}")
+                    }
+                }
+            }
+            _timeline.update { TimelineReducer.resolveApproval(it, entryId) }
         }
 
         override suspend fun setModel(model: String, provider: String?) {

@@ -113,11 +113,27 @@ implements it as the app's primary connection path:
   through `redact()` (strips the token value, `token=`/`ticket=`/`key=`
   query params, and Bearer header values).
 
+- **Structured runs** (used when `features.run_submission` is advertised):
+  `POST /v1/runs` `{input, session_id, model?}` → 202 `{run_id}`
+  (api_server.py:6563-6992); `GET /v1/runs/{run_id}/events` SSE with data-only
+  frames carrying `event` ∈ `message.delta{delta}`, `tool.started{tool,preview}`,
+  `tool.completed{tool,duration,error}`, `reasoning.available{text}`,
+  `subagent.start|complete{goal,model,summary,…}`,
+  `approval.request{command,choices,…}`, `approval.responded{choice}`,
+  `run.completed{output,usage}`, `run.failed{error}`, `run.cancelled`;
+  30 s `: keepalive` comments. Approvals resolve via
+  `POST /v1/runs/{id}/approval` `{choice: once|session|always|deny}`
+  (api_server.py:7045), stop via `POST /v1/runs/{id}/stop`. If the stream
+  drops without a terminal frame the client settles from the pollable
+  `GET /v1/runs/{id}` status instead of guessing. Runs take text-only input,
+  so image-bearing turns ride chat completions (image parts as
+  `data:image/…;base64` URLs, api_server.py:544-640).
+
 Not yet used from this surface (available upstream, candidates for next
-milestones): `/v1/responses`, `/v1/runs` + `/v1/runs/{id}/events` SSE with
-approvals/steer/stop, `/v1/skills`, `/v1/toolsets`, `/api/jobs` (cron),
-`/api/model/options`, session fork/model-lock, and `/p/{profile}/…` profile
-mirrors (api_server.py:2050-2103, :7363).
+milestones): `/v1/responses`, `/v1/runs/{id}/steer`, `/v1/skills`,
+`/v1/toolsets`, `/api/jobs` (cron), `/api/model/options`, session
+fork/model-lock, and `/p/{profile}/…` profile mirrors
+(api_server.py:2050-2103, :7363).
 
 ## Adapted code / patterns
 

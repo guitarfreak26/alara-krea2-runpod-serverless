@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -104,6 +105,7 @@ fun ChatPane(
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     val entries = chat.timeline?.entries.orEmpty()
+    val mediaAuth by viewModel.mediaAuth.collectAsState()
 
     // reverseLayout: index 0 sits at the bottom, so opening a conversation
     // starts at the newest message, streaming growth stays anchored, and the
@@ -148,7 +150,7 @@ fun ChatPane(
                     when (row) {
                         is TranscriptRow.TimeMarker -> TimeMarkerRow(row.timestampMs)
                         is TranscriptRow.Entry -> when (val entry = row.entry) {
-                            is ChatEntry.Message -> MessageBubble(entry)
+                            is ChatEntry.Message -> MessageBubble(entry, mediaAuth)
                             is ChatEntry.Reasoning -> ReasoningRow(entry)
                             is ChatEntry.ToolRun -> ToolRow(entry)
                             is ChatEntry.Approval -> ApprovalCard(
