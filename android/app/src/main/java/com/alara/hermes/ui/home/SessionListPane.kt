@@ -349,6 +349,8 @@ private fun SwipeableSessionRow(
             }
             false // always snap back; the refreshed list reflects the flag
         },
+        // Default threshold demands a near-full swipe; ~30% feels like Telegram.
+        positionalThreshold = { totalDistance -> totalDistance * 0.30f },
     )
     SwipeToDismissBox(
         state = dismissState,

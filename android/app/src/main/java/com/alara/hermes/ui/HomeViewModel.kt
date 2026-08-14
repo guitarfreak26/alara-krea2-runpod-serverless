@@ -130,7 +130,14 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = container.gatewayFor(server.url, server.token, server.mode) ?: return
         gateway = gw
         _state.update { it.copy(features = gw.features) }
-        viewModelScope.launch { gw.connection.collect { c -> _state.update { it.copy(connection = c) } } }
+        viewModelScope.launch {
+            gw.connection.collect { c ->
+                // features is computed from server capabilities, which land with
+                // the first successful connect — re-read it on every transition
+                // so pin/archive/rename gates reflect the real server.
+                _state.update { it.copy(connection = c, features = gw.features) }
+            }
+        }
         viewModelScope.launch { gw.sessionsChanged.collect { refreshSessions(silent = true) } }
         gw.connect()
         loadProfiles(server.activeProfile)
