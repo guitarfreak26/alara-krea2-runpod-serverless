@@ -224,6 +224,7 @@ class ApiServerGateway(
                 running = handles[key]?.timeline?.value?.running == true ||
                     (session.isActive == true && (ended == null || ended is kotlinx.serialization.json.JsonNull)),
                 pinned = session.pinned == true,
+                archived = session.archived == true,
                 source = session.source,
                 model = session.model,
             )
@@ -317,17 +318,29 @@ class ApiServerGateway(
     }
 
     override suspend fun renameSession(sessionKey: String, title: String) {
+        patchSessionFlag(sessionKey, buildJsonObject { put("title", title) }, "rename")
+    }
+
+    override suspend fun setPinned(sessionKey: String, pinned: Boolean) {
+        patchSessionFlag(sessionKey, buildJsonObject { put("pinned", pinned) }, "pin")
+    }
+
+    override suspend fun setArchived(sessionKey: String, archived: Boolean) {
+        patchSessionFlag(sessionKey, buildJsonObject { put("archived", archived) }, "archive")
+    }
+
+    /** PATCH /api/sessions/{id} — durable flags shared with the desktop sidebar. */
+    private suspend fun patchSessionFlag(sessionKey: String, body: JsonObject, action: String) {
         if (capabilities?.sessionUpdate != true) {
-            throw HermesRpcException("this server does not advertise session rename")
+            throw HermesRpcException("this server does not advertise session updates ($action)")
         }
-        val body = buildJsonObject { put("title", title) }
         withContext(Dispatchers.IO) {
             restClient.newCall(
                 request(url("api/sessions", sessionKey))
                     .patch(body.toString().toRequestBody(jsonMedia)).build(),
             ).execute().use { response ->
                 if (!response.isSuccessful) {
-                    throw HermesHttpException(response.code, "rename failed: HTTP ${response.code}")
+                    throw HermesHttpException(response.code, "$action failed: HTTP ${response.code}")
                 }
             }
         }

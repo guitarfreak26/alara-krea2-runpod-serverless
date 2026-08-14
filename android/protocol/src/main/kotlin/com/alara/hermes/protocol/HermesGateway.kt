@@ -64,4 +64,8 @@ interface HermesGateway {
 
     suspend fun renameSession(sessionKey: String, title: String)
     suspend fun deleteSession(sessionKey: String)
+
+    /** Durable per-session flags shared with the desktop sidebar. */
+    suspend fun setPinned(sessionKey: String, pinned: Boolean)
+    suspend fun setArchived(sessionKey: String, archived: Boolean)
 }

@@ -47,6 +47,8 @@ data class HomeUiState(
     val chat: ChatUiState = ChatUiState(),
     val models: List<ModelOption> = emptyList(),
     val notice: String? = null,
+    /** True while the list shows archived conversations instead of active ones. */
+    val showArchived: Boolean = false,
     val chatSettings: com.alara.hermes.data.ChatSettings =
         com.alara.hermes.data.ChatSettings(activeFirst = false, showToolActivity = true),
 )
@@ -94,6 +96,32 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             .thenByDescending { it.pinned }
             .thenByDescending { it.updatedAtMs },
     )
+
+    /** The list view honors the archived toggle; flags live on the server. */
+    fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> =
+        state.sessions.filter { it.archived == state.showArchived }
+
+    fun toggleArchivedView() {
+        _state.update { it.copy(showArchived = !it.showArchived) }
+    }
+
+    fun setPinned(sessionKey: String, pinned: Boolean) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            runCatching { gw.setPinned(sessionKey, pinned) }
+                .onFailure { t -> _state.update { it.copy(notice = clean("Pin failed: ${t.message}")) } }
+            refreshSessions(silent = true)
+        }
+    }
+
+    fun setArchived(sessionKey: String, archived: Boolean) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            runCatching { gw.setArchived(sessionKey, archived) }
+                .onFailure { t -> _state.update { it.copy(notice = clean("Archive failed: ${t.message}")) } }
+            refreshSessions(silent = true)
+        }
+    }
 
     private suspend fun bootstrap() {
         val server = container.settings.currentServer()

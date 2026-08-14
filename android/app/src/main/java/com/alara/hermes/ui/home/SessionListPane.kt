@@ -27,6 +27,11 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
@@ -64,6 +69,10 @@ fun SessionListPane(
     onSearch: (String) -> Unit,
     onRename: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onPin: (String, Boolean) -> Unit,
+    onArchive: (String, Boolean) -> Unit,
+    onToggleArchivedView: () -> Unit,
+    visibleSessions: List<com.alara.hermes.protocol.SessionSummary>,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -142,6 +151,17 @@ fun SessionListPane(
                 )
                 Spacer(Modifier.width(14.dp))
                 Icon(
+                    if (state.showArchived) Icons.Filled.Unarchive else Icons.Outlined.Archive,
+                    contentDescription = if (state.showArchived) "Show active" else "Show archived",
+                    tint = if (state.showArchived) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.clickable(onClick = onToggleArchivedView),
+                )
+                Spacer(Modifier.width(14.dp))
+                Icon(
                     Icons.Filled.Settings,
                     contentDescription = "Settings",
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -164,14 +184,18 @@ fun SessionListPane(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-            if (state.sessionsLoading && state.sessions.isEmpty()) {
+            if (state.sessionsLoading && visibleSessions.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-            } else if (state.sessions.isEmpty()) {
+            } else if (visibleSessions.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(
-                        if (state.searchQuery.isBlank()) "No conversations yet" else "No matches",
+                        when {
+                            state.showArchived -> "No archived conversations"
+                            state.searchQuery.isBlank() -> "No conversations yet"
+                            else -> "No matches"
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -182,12 +206,14 @@ fun SessionListPane(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     LazyColumn(Modifier.fillMaxSize()) {
-                        items(state.sessions, key = { it.key }) { session ->
-                            SessionRow(
+                        items(visibleSessions, key = { it.key }) { session ->
+                            SwipeableSessionRow(
                                 session = session,
                                 selected = session.key == state.chat.sessionKey,
                                 onClick = { onOpenSession(session.key) },
                                 onLongClick = { contextSession = session },
+                                onPin = { onPin(session.key, !session.pinned) },
+                                onArchive = { onArchive(session.key, !session.archived) },
                             )
                         }
                     }
@@ -219,6 +245,14 @@ fun SessionListPane(
                 )
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 if (state.features.rename) {
+                    SheetAction(if (session.pinned) "Unpin" else "Pin") {
+                        onPin(session.key, !session.pinned)
+                        contextSession = null
+                    }
+                    SheetAction(if (session.archived) "Unarchive" else "Archive") {
+                        onArchive(session.key, !session.archived)
+                        contextSession = null
+                    }
                     SheetAction("Rename") {
                         renameTarget = session
                         contextSession = null
@@ -290,6 +324,94 @@ private fun ConnectionDot(connection: com.alara.hermes.protocol.ConnectionState)
             .size(8.dp)
             .background(color, CircleShape),
     )
+}
+
+/**
+ * Swipe right -> pin/unpin, swipe left -> archive/unarchive. The row snaps
+ * back after the action; the server flags are the durable state.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableSessionRow(
+    session: SessionSummary,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onPin: () -> Unit,
+    onArchive: () -> Unit,
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> onPin()
+                SwipeToDismissBoxValue.EndToStart -> onArchive()
+                SwipeToDismissBoxValue.Settled -> Unit
+            }
+            false // always snap back; the refreshed list reflects the flag
+        },
+    )
+    SwipeToDismissBox(
+        state = dismissState,
+        backgroundContent = {
+            val target = dismissState.dismissDirection
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = when (target) {
+                    SwipeToDismissBoxValue.StartToEnd -> Arrangement.Start
+                    else -> Arrangement.End
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        when (target) {
+                            SwipeToDismissBoxValue.StartToEnd ->
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                            SwipeToDismissBoxValue.EndToStart ->
+                                MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> MaterialTheme.colorScheme.background
+                        },
+                    )
+                    .padding(horizontal = 24.dp),
+            ) {
+                when (target) {
+                    SwipeToDismissBoxValue.StartToEnd -> {
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            if (session.pinned) "Unpin" else "Pin",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                    SwipeToDismissBoxValue.EndToStart -> {
+                        Text(
+                            if (session.archived) "Unarchive" else "Archive",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            if (session.archived) Icons.Filled.Unarchive else Icons.Outlined.Archive,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    else -> Unit
+                }
+            }
+        },
+    ) {
+        SessionRow(
+            session = session,
+            selected = selected,
+            onClick = onClick,
+            onLongClick = onLongClick,
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)

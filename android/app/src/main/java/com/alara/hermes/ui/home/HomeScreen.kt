@@ -72,6 +72,10 @@ fun HomeScreen(
                         onSearch = viewModel::setSearchQuery,
                         onRename = viewModel::renameSession,
                         onDelete = viewModel::deleteSession,
+                        onPin = viewModel::setPinned,
+                        onArchive = viewModel::setArchived,
+                        onToggleArchivedView = viewModel::toggleArchivedView,
+                        visibleSessions = viewModel.visibleSessions(state),
                         onRefresh = { viewModel.refreshSessions() },
                         onOpenSettings = onOpenSettings,
                     )

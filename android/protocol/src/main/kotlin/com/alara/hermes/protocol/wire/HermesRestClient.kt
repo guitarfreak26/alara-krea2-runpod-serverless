@@ -88,6 +88,7 @@ class HermesRestClient(
         limit: Int = 100,
         offset: Int = 0,
         excludeSources: String? = "cron,kanban,tool",
+        archived: String = "exclude",
     ): List<StoredSession> {
         val raw = getRaw(
             url(
@@ -96,7 +97,7 @@ class HermesRestClient(
                     "limit" to limit.coerceAtMost(100).toString(),
                     "offset" to offset.toString(),
                     "order" to "recent",
-                    "archived" to "exclude",
+                    "archived" to archived,
                     "profile" to profile,
                     "exclude_sources" to excludeSources,
                 ),

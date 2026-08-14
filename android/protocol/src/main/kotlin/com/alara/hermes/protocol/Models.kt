@@ -22,6 +22,7 @@ data class SessionSummary(
     val updatedAtMs: Long = 0,
     val running: Boolean = false,
     val pinned: Boolean = false,
+    val archived: Boolean = false,
     val source: String? = null,
     val model: String? = null,
 )

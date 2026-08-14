@@ -163,7 +163,7 @@ class HermesLiveGateway(
         }
 
     override suspend fun listSessions(profileId: String?): List<SessionSummary> =
-        rest.listSessions(profileId).mapNotNull { it.toSummary(profileId) }
+        rest.listSessions(profileId, archived = "include").mapNotNull { it.toSummary(profileId) }
 
     override suspend fun searchSessions(query: String, profileId: String?): List<SessionSummary> =
         rest.searchSessions(query, profileId).mapNotNull { it.toSummary(profileId) }
@@ -178,6 +178,7 @@ class HermesLiveGateway(
             updatedAtMs = ((lastActive ?: startedAt) ?: 0.0).let { (it * 1000).toLong() },
             running = running == true || isActive == true,
             pinned = pinned == true,
+            archived = archived == true,
             source = source,
             model = model,
         )
@@ -254,6 +255,16 @@ class HermesLiveGateway(
         // REST PATCH addresses the stored id and works for non-live sessions too.
         val profile = handles[sessionKey]?.profileId
         rest.patchSession(sessionKey, profile, title = title)
+        _sessionsChanged.tryEmit(Unit)
+    }
+
+    override suspend fun setPinned(sessionKey: String, pinned: Boolean) {
+        rest.patchSession(sessionKey, handles[sessionKey]?.profileId, pinned = pinned)
+        _sessionsChanged.tryEmit(Unit)
+    }
+
+    override suspend fun setArchived(sessionKey: String, archived: Boolean) {
+        rest.patchSession(sessionKey, handles[sessionKey]?.profileId, archived = archived)
         _sessionsChanged.tryEmit(Unit)
     }
 
