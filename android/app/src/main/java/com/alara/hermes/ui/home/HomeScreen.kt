@@ -207,6 +207,24 @@ private fun HomeDrawer(
             }
             Spacer(Modifier.height(12.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        } else {
+            // No named profiles configured yet: say where to add them instead
+            // of silently hiding the switcher.
+            Text(
+                "Profile",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
+            )
+            Text(
+                "Add your desktop profile names (kimi, grok, …) under " +
+                    "Settings → Connection → Profiles to switch between them here.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 28.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
         Spacer(Modifier.height(12.dp))
         if (state.features.skills) {

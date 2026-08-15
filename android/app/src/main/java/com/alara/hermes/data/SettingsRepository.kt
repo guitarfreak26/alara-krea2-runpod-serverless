@@ -35,6 +35,8 @@ data class ChatSettings(
     val activeFirst: Boolean,
     /** Render tool-activity rows inside conversations. */
     val showToolActivity: Boolean,
+    /** Show replies token-by-token; off shows a typing dot until complete. */
+    val streamLive: Boolean = true,
 )
 
 /**
@@ -55,6 +57,7 @@ class SettingsRepository(
         val Onboarded = booleanPreferencesKey("onboarded")
         val ActiveFirst = booleanPreferencesKey("sessions_active_first")
         val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
+        val StreamLive = booleanPreferencesKey("stream_live")
         val NotificationContent = booleanPreferencesKey("notification_content")
         val LastOpenSession = stringPreferencesKey("last_open_session")
         val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
@@ -85,11 +88,16 @@ class SettingsRepository(
         ChatSettings(
             activeFirst = prefs[Keys.ActiveFirst] ?: false,
             showToolActivity = prefs[Keys.ShowToolActivity] ?: true,
+            streamLive = prefs[Keys.StreamLive] ?: true,
         )
     }
 
     suspend fun setActiveFirst(enabled: Boolean) {
         context.dataStore.edit { it[Keys.ActiveFirst] = enabled }
+    }
+
+    suspend fun setStreamLive(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.StreamLive] = enabled }
     }
 
     suspend fun setShowToolActivity(enabled: Boolean) {

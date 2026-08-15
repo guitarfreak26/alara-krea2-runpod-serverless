@@ -190,6 +190,12 @@ fun SettingsScreen(
                 checked = chatSettings?.showToolActivity != false,
                 onChecked = { scope.launch { container.settings.setShowToolActivity(it) } },
             )
+            SwitchRow(
+                title = "Stream replies live",
+                subtitle = "Off shows a typing indicator and the reply appears in one go",
+                checked = chatSettings?.streamLive != false,
+                onChecked = { scope.launch { container.settings.setStreamLive(it) } },
+            )
 
             SectionDivider()
             SectionLabel("Notifications")

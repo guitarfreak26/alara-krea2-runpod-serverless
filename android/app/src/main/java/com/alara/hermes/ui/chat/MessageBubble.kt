@@ -30,14 +30,31 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.sp
 import com.alara.hermes.protocol.ChatEntry
 import com.alara.hermes.protocol.Role
 import com.alara.hermes.util.extractMediaLinks
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownTypography
 
 /** Auth context for loading private media from the gateway host. */
 data class MediaAuth(val host: String, val header: String)
+
+/** Slightly tighter than bodyLarge: chat threads read better a step smaller. */
+private val messageTextStyle: TextStyle
+    @Composable get() = MaterialTheme.typography.bodyLarge.copy(
+        fontSize = 15.sp,
+        lineHeight = 21.sp,
+    )
 
 /**
  * Chat bubble. User turns get a tinted right-aligned bubble; assistant turns
@@ -45,7 +62,11 @@ data class MediaAuth(val host: String, val header: String)
  */
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
-fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
+fun MessageBubble(
+    entry: ChatEntry.Message,
+    mediaAuth: MediaAuth? = null,
+    streamLive: Boolean = true,
+) {
     val context = LocalContext.current
     var actionsOpen by remember { mutableStateOf(false) }
 
@@ -89,7 +110,7 @@ fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
                         if (entry.text.isNotBlank()) {
                             Text(
                                 entry.text,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style = messageTextStyle,
                                 color = MaterialTheme.colorScheme.onBackground,
                             )
                         }
@@ -115,28 +136,33 @@ fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
                     Column {
-                        if (entry.streaming) {
-                            // Markdown re-parses the whole document per token and
-                            // makes streaming stutter; render plain text with an
-                            // inline caret and switch to markdown on completion.
-                            Text(
-                                if (entry.text.isEmpty()) "…" else entry.text + " ▍",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        } else {
-                            Markdown(
-                                content = entry.text,
-                                components = markdownComponents(
-                                    codeBlock = codeBlockWithCopy,
-                                    codeFence = codeFenceWithCopy,
-                                ),
-                            )
-                            MediaGallery(
-                                links = extractMediaLinks(entry.text),
-                                gatewayHost = mediaAuth?.host,
-                                authHeader = mediaAuth?.header,
-                            )
+                        when {
+                            entry.streaming && !streamLive -> TypingIndicator()
+                            entry.streaming -> {
+                                // Markdown re-parses the whole document per token and
+                                // makes streaming stutter; render plain text with an
+                                // inline caret and switch to markdown on completion.
+                                Text(
+                                    if (entry.text.isEmpty()) "…" else entry.text + " ▍",
+                                    style = messageTextStyle,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                            }
+                            else -> {
+                                Markdown(
+                                    content = entry.text,
+                                    components = markdownComponents(
+                                        codeBlock = codeBlockWithCopy,
+                                        codeFence = codeFenceWithCopy,
+                                    ),
+                                    typography = chatMarkdownTypography(),
+                                )
+                                MediaGallery(
+                                    links = extractMediaLinks(entry.text),
+                                    gatewayHost = mediaAuth?.host,
+                                    authHeader = mediaAuth?.header,
+                                )
+                            }
                         }
                     }
                 }
@@ -172,6 +198,52 @@ fun MessageBubble(entry: ChatEntry.Message, mediaAuth: MediaAuth? = null) {
                     actionsOpen = false
                 }
             }
+        }
+    }
+}
+
+/**
+ * Chat-scale markdown: body text matches [messageTextStyle], headings step
+ * down from the huge display styles, and paragraphs keep clear spacing.
+ */
+@Composable
+private fun chatMarkdownTypography() = markdownTypography(
+    h1 = MaterialTheme.typography.titleLarge,
+    h2 = MaterialTheme.typography.titleMedium,
+    h3 = MaterialTheme.typography.titleSmall,
+    h4 = MaterialTheme.typography.titleSmall,
+    h5 = MaterialTheme.typography.titleSmall,
+    h6 = MaterialTheme.typography.labelLarge,
+    text = messageTextStyle,
+    paragraph = messageTextStyle,
+    ordered = messageTextStyle,
+    bullet = messageTextStyle,
+    list = messageTextStyle,
+)
+
+/** iMessage-style pulsing dots shown while a reply streams with live text off. */
+@Composable
+private fun TypingIndicator() {
+    val transition = rememberInfiniteTransition(label = "typing")
+    Row {
+        (0..2).forEach { index ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(600, delayMillis = index * 200, easing = LinearEasing),
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "dot$index",
+            )
+            Text(
+                "●",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .padding(horizontal = 2.dp)
+                    .alpha(alpha),
+            )
         }
     }
 }

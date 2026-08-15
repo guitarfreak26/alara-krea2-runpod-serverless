@@ -154,7 +154,11 @@ fun ChatPane(
                     when (row) {
                         is TranscriptRow.TimeMarker -> TimeMarkerRow(row.timestampMs)
                         is TranscriptRow.Entry -> when (val entry = row.entry) {
-                            is ChatEntry.Message -> MessageBubble(entry, mediaAuth)
+                            is ChatEntry.Message -> MessageBubble(
+                                entry,
+                                mediaAuth,
+                                streamLive = state.chatSettings.streamLive,
+                            )
                             is ChatEntry.Reasoning -> ReasoningRow(entry)
                             is ChatEntry.ToolRun -> ToolRow(entry)
                             is ChatEntry.Approval -> ApprovalCard(
