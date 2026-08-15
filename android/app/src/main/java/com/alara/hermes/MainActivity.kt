@@ -146,6 +146,17 @@ private fun MainFlow(container: AppContainer) {
         }
     }
 
+    // Background watcher follows its setting; stopping is immediate.
+    val watchContext = androidx.compose.ui.platform.LocalContext.current
+    val watchEnabled by container.settings.backgroundWatchEnabled.collectAsState(initial = null)
+    androidx.compose.runtime.LaunchedEffect(watchEnabled) {
+        when (watchEnabled) {
+            true -> com.alara.hermes.notify.RemoteWatchService.start(watchContext)
+            false -> com.alara.hermes.notify.RemoteWatchService.stop(watchContext)
+            null -> Unit
+        }
+    }
+
     // Reconcile with the backend every time the app returns to the foreground.
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {

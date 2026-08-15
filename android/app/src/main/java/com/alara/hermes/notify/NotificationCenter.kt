@@ -148,6 +148,16 @@ class NotificationCenter(
     private fun appInForeground(): Boolean =
         ProcessLifecycleOwner.get().lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
+    /** Activity spotted on the server from another device (background watcher). */
+    suspend fun postRemoteActivity(sessionKey: String, title: String, text: String) {
+        post(
+            channel = CHANNEL_COMPLETIONS,
+            sessionKey = sessionKey,
+            title = title,
+            privateText = text,
+        )
+    }
+
     private suspend fun post(
         channel: String,
         sessionKey: String,

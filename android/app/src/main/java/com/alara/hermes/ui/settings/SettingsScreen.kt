@@ -206,6 +206,13 @@ fun SettingsScreen(
                 checked = notifContent,
                 onChecked = { scope.launch { container.settings.setNotificationContentEnabled(it) } },
             )
+            val backgroundWatch by container.settings.backgroundWatchEnabled.collectAsState(initial = false)
+            SwitchRow(
+                title = "Watch server in background",
+                subtitle = "Checks once a minute and notifies when Matrix, Discord or desktop turns finish. Keeps a quiet ongoing notification.",
+                checked = backgroundWatch,
+                onChecked = { scope.launch { container.settings.setBackgroundWatchEnabled(it) } },
+            )
             SettingRow(
                 title = "Per-type control",
                 subtitle = "Completions, approvals and failures use separate Android channels — long-press a notification to tune them",

@@ -58,6 +58,7 @@ class SettingsRepository(
         val ActiveFirst = booleanPreferencesKey("sessions_active_first")
         val ShowToolActivity = booleanPreferencesKey("show_tool_activity")
         val StreamLive = booleanPreferencesKey("stream_live")
+        val BackgroundWatch = booleanPreferencesKey("background_watch")
         val NotificationContent = booleanPreferencesKey("notification_content")
         val LastOpenSession = stringPreferencesKey("last_open_session")
         val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
@@ -102,6 +103,14 @@ class SettingsRepository(
 
     suspend fun setShowToolActivity(enabled: Boolean) {
         context.dataStore.edit { it[Keys.ShowToolActivity] = enabled }
+    }
+
+    /** Background watcher: notify about turns driven from other devices. */
+    val backgroundWatchEnabled: Flow<Boolean> =
+        context.dataStore.data.map { it[Keys.BackgroundWatch] ?: false }
+
+    suspend fun setBackgroundWatchEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[Keys.BackgroundWatch] = enabled }
     }
 
     /** Message content in notifications — OFF by default (lock-screen privacy). */
