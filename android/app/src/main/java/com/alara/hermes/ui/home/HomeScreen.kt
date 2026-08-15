@@ -25,8 +25,10 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.layout.AnimatedPane
 import androidx.compose.material3.adaptive.layout.ListDetailPaneScaffoldRole
+import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirectiveWithTwoPanesOnMediumWidth
 import androidx.compose.material3.adaptive.navigation.NavigableListDetailPaneScaffold
 import androidx.compose.material3.adaptive.navigation.rememberListDetailPaneScaffoldNavigator
 import androidx.compose.material3.rememberDrawerState
@@ -56,7 +58,14 @@ fun HomeScreen(
     openSessionRequests: kotlinx.coroutines.flow.MutableStateFlow<String?>? = null,
 ) {
     val state by viewModel.state.collectAsState()
-    val navigator = rememberListDetailPaneScaffoldNavigator<String>()
+    // Two panes from medium width (~600dp) up, not just expanded (840dp+):
+    // the Fold's inner screen in portrait is ~670dp wide and should read as
+    // sessions-left / conversation-right, like Claude's tablet layout.
+    val navigator = rememberListDetailPaneScaffoldNavigator<String>(
+        scaffoldDirective = calculatePaneScaffoldDirectiveWithTwoPanesOnMediumWidth(
+            currentWindowAdaptiveInfo(),
+        ),
+    )
     val scope = rememberCoroutineScope()
     val snackbar = SnackbarHostState()
     val drawerState = rememberDrawerState(DrawerValue.Closed)

@@ -55,7 +55,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-private const val MAX_ATTACHMENTS = 4
+private const val MAX_ATTACHMENTS = 8
 private const val MAX_ATTACHMENT_BYTES = 8L * 1024 * 1024
 private const val MAX_TEXT_FILE_BYTES = 384L * 1024
 
