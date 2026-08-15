@@ -8,10 +8,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.DrawerValue
@@ -154,10 +152,6 @@ fun HomeScreen(
                     scope.launch { drawerState.close() }
                     onOpenOverlay(route)
                 },
-                onSwitchProfile = { profile ->
-                    scope.launch { drawerState.close() }
-                    viewModel.switchProfile(profile)
-                },
             )
         },
     ) {
@@ -219,7 +213,6 @@ fun HomeScreen(
 private fun HomeDrawer(
     state: HomeUiState,
     onNavigate: (String) -> Unit,
-    onSwitchProfile: (String) -> Unit,
 ) {
     ModalDrawerSheet(
         drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -230,60 +223,8 @@ private fun HomeDrawer(
             style = MaterialTheme.typography.titleLarge,
             modifier = Modifier.padding(horizontal = 28.dp, vertical = 20.dp),
         )
+        // Profile switching lives in the header title dropdown, not here.
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        // Profile switcher: which backend profile (default, kimi, grok, …)
-        // the session list and NEW conversations are scoped to.
-        if (state.profiles.size > 1) {
-            Text(
-                "Profile",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
-            )
-            state.profiles.forEach { profile ->
-                NavigationDrawerItem(
-                    label = { Text(profile.displayName) },
-                    icon = {
-                        Icon(
-                            if (profile.id == state.activeProfile) {
-                                Icons.Filled.Person
-                            } else {
-                                Icons.Outlined.PersonOutline
-                            },
-                            contentDescription = null,
-                        )
-                    },
-                    badge = if (profile.isDefault) {
-                        { Text("default", style = MaterialTheme.typography.labelSmall) }
-                    } else {
-                        null
-                    },
-                    selected = profile.id == state.activeProfile,
-                    onClick = { onSwitchProfile(profile.id) },
-                    modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding),
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        } else {
-            // No named profiles configured yet: say where to add them instead
-            // of silently hiding the switcher.
-            Text(
-                "Profile",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(horizontal = 28.dp, vertical = 12.dp),
-            )
-            Text(
-                "Add your desktop profile names (kimi, grok, …) under " +
-                    "Settings → Connection → Profiles to switch between them here.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 28.dp),
-            )
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-        }
         Spacer(Modifier.height(12.dp))
         if (state.features.skills) {
             DrawerItem("Skills", Icons.Outlined.AutoAwesome) { onNavigate("skills") }

@@ -107,6 +107,8 @@ class ApiServerGateway(
         val sessionChatStreaming: Boolean = false,
         /** GET /api/sessions accepts `archived=exclude|only|include`. */
         val archivedListing: Boolean = false,
+        /** GET /v1/usage serves provider allowance windows. */
+        val accountUsage: Boolean? = null,
         val skillsApi: Boolean? = null,
         val jobsAvailable: Boolean? = null,
         val model: String? = null,
@@ -145,6 +147,9 @@ class ApiServerGateway(
     /** Profiles from the last [listProfiles] read; gates [GatewayFeatures.profiles]. */
     @Volatile private var configuredProfiles: List<String> = emptyList()
 
+    /** Server-advertised URL prefixes per profile (`/v1/profiles` api_prefix). */
+    @Volatile private var profilePrefixes: Map<String, String> = emptyMap()
+
     override fun setActiveProfile(profileId: String?) {
         val next = profileId?.trim()?.takeIf { it.isNotEmpty() } ?: "default"
         if (next != activeProfile) {
@@ -159,7 +164,18 @@ class ApiServerGateway(
     private fun url(vararg segments: String): HttpUrl {
         val builder = baseUrl.newBuilder()
         val profile = activeProfile
-        if (profile != "default") builder.addPathSegments("p/$profile")
+        // The server's advertised api_prefix wins; /p/{name} is the documented
+        // mirror shape and the fallback when discovery hasn't run.
+        val prefix = profilePrefixes[profile]?.trim('/')
+            ?: if (profile != "default") "p/$profile" else ""
+        if (prefix.isNotEmpty()) builder.addPathSegments(prefix)
+        segments.forEach { builder.addPathSegments(it) }
+        return builder.build()
+    }
+
+    /** Root-listener URL, ignoring the active profile (discovery endpoints). */
+    private fun rootUrl(vararg segments: String): HttpUrl {
+        val builder = baseUrl.newBuilder()
         segments.forEach { builder.addPathSegments(it) }
         return builder.build()
     }
@@ -212,6 +228,8 @@ class ApiServerGateway(
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
             archivedListing = (features?.get("session_archived_listing") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
+            accountUsage = (features?.get("account_usage") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull(),
             skillsApi = (features?.get("skills_api") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
             // jobs_admin=false means CRUD is locked down; listing may still work,
@@ -229,6 +247,13 @@ class ApiServerGateway(
     }
 
     override suspend fun listProfiles(): List<HermesProfile> {
+        // Server discovery first: GET /v1/profiles advertises each profile's
+        // api_prefix (recent builds). User-entered names remain the fallback.
+        val discovered = runCatching { fetchServerProfiles() }.getOrDefault(emptyList())
+        if (discovered.isNotEmpty()) {
+            configuredProfiles = discovered.map { it.id }
+            return discovered
+        }
         val names = runCatching { profilesProvider() }.getOrDefault(emptyList())
             .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
         // A lone entry means no real choice; the switcher stays hidden.
@@ -241,6 +266,31 @@ class ApiServerGateway(
         return resolved.map {
             HermesProfile(id = it, displayName = it, isDefault = it == "default")
         }
+    }
+
+    private suspend fun fetchServerProfiles(): List<HermesProfile> {
+        val payload = getJson(rootUrl("v1/profiles"))
+        val rows = when (payload) {
+            is JsonArray -> payload
+            is JsonObject -> (payload["profiles"] ?: payload["data"]) as? JsonArray
+                ?: return emptyList()
+            else -> return emptyList()
+        }
+        val prefixes = mutableMapOf<String, String>()
+        val profiles = rows.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            val name = (str("name") ?: str("id"))?.trim()?.takeIf { it.isNotEmpty() }
+                ?: return@mapNotNull null
+            str("api_prefix")?.let { prefixes[name] = it.trim('/') }
+            HermesProfile(
+                id = name,
+                displayName = str("display_name")?.takeIf { it.isNotBlank() } ?: name,
+                isDefault = str("is_default")?.toBooleanStrictOrNull() ?: (name == "default"),
+            )
+        }
+        if (profiles.isNotEmpty()) profilePrefixes = prefixes
+        return profiles
     }
 
     private fun dataRows(element: JsonElement): JsonArray = when (element) {
@@ -565,17 +615,33 @@ class ApiServerGateway(
      * — the serialized form of agent/account_usage.py AccountUsageSnapshot.
      */
     override suspend fun accountUsage(): List<AccountUsage> {
+        if (capabilities == null) connect()
+        // features.account_usage === true is the gate; an explicit false means
+        // this build has no usage endpoint (the UI shows its own hint).
+        if (capabilities?.accountUsage == false) {
+            throw HermesHttpException(404, "account_usage is not advertised by this server")
+        }
         val payload = getJson(url("v1/usage"))
         val rows = when (payload) {
             is JsonArray -> payload
-            is JsonObject -> (payload["providers"] ?: payload["snapshots"] ?: payload["data"]) as? JsonArray
-                ?: JsonArray(emptyList())
+            is JsonObject -> (payload["providers"] ?: payload["accounts"] ?: payload["snapshots"] ?: payload["data"]) as? JsonArray
+                // hermes.account_usage can be ONE top-level object: windows[],
+                // details[], unavailable_reason at the root. Wrap it as a
+                // single account row.
+                ?: if (payload.containsKey("windows") || payload.containsKey("details") ||
+                    payload.containsKey("unavailable_reason")
+                ) {
+                    JsonArray(listOf(payload))
+                } else {
+                    JsonArray(emptyList())
+                }
             else -> JsonArray(emptyList())
         }
         return rows.mapNotNull { row ->
             val obj = row as? JsonObject ?: return@mapNotNull null
             fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
-            val provider = str("provider") ?: str("title") ?: return@mapNotNull null
+            val provider = str("provider") ?: str("title") ?: str("name") ?: str("account")
+                ?: "Account"
             val windows = (obj["windows"] as? JsonArray).orEmpty().mapNotNull { win ->
                 val w = win as? JsonObject ?: return@mapNotNull null
                 fun wstr(key: String) = (w[key] as? JsonPrimitive)?.contentOrNull

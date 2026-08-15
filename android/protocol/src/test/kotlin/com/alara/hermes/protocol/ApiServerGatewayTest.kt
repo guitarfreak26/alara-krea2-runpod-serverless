@@ -278,7 +278,10 @@ class ApiServerGatewayTest {
             server.url("/"), "api-key", scope,
             profilesProvider = { listOf("kimi", "grok") },
         )
+        // Old build: /v1/profiles discovery 404s, user-entered names apply.
+        server.enqueue(MockResponse().setResponseCode(404))
         val profiles = gw.listProfiles()
+        assertEquals("/v1/profiles", server.takeRequest().path)
         assertEquals(listOf("default", "kimi", "grok"), profiles.map { it.id })
         assertTrue(profiles.first { it.id == "default" }.isDefault)
         assertTrue(gw.features.profiles)
@@ -300,6 +303,54 @@ class ApiServerGatewayTest {
         gw.listSessions(null)
         assertEquals("/v1/capabilities", server.takeRequest().path)
         assertEquals("/api/sessions", server.takeRequest().path)
+    }
+
+    @Test
+    fun `server-discovered profiles carry api prefixes and win over manual names`() = runBlocking {
+        val gw = ApiServerGateway(
+            server.url("/"), "api-key", scope,
+            profilesProvider = { listOf("stale-manual-name") },
+        )
+        server.enqueue(
+            MockResponse().setBody(
+                """{"profiles":[
+                    {"name":"default","api_prefix":"","is_default":true},
+                    {"name":"kimi","api_prefix":"/p/kimi"},
+                    {"name":"grok","api_prefix":"/p/grok"}
+                 ]}""",
+            ),
+        )
+        val profiles = gw.listProfiles()
+        assertEquals("/v1/profiles", server.takeRequest().path)
+        assertEquals(listOf("default", "kimi", "grok"), profiles.map { it.id })
+        assertTrue(gw.features.profiles)
+
+        gw.setActiveProfile("grok")
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        gw.listSessions("grok")
+        assertEquals("/p/grok/v1/capabilities", server.takeRequest().path)
+        assertEquals("/p/grok/api/sessions", server.takeRequest().path)
+    }
+
+    @Test
+    fun `account usage parses the single object shape`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        gateway.testConnection().getOrThrow()
+        server.takeRequest()
+        server.enqueue(
+            MockResponse().setBody(
+                """{"object":"hermes.account_usage",
+                    "windows":[{"label":"5h window","used_percent":37.5,"reset_at":1755300000,"detail":"resets soon"}],
+                    "details":["Codex plan: pro"],
+                    "unavailable_reason":null}""",
+            ),
+        )
+        val usage = gateway.accountUsage()
+        assertEquals("/v1/usage", server.takeRequest().path)
+        assertEquals(1, usage.size)
+        assertEquals(37.5, usage.first().windows.first().usedPercent!!, 0.01)
+        assertEquals(listOf("Codex plan: pro"), usage.first().details)
     }
 
     @Test
