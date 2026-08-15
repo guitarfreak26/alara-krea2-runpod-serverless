@@ -240,18 +240,25 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val active = preferred?.takeIf { p -> profiles.any { it.id == p } }
             ?: profiles.firstOrNull { it.isDefault }?.id
             ?: profiles.firstOrNull()?.id
-        _state.update { it.copy(profiles = profiles, activeProfile = active) }
+        gw.setActiveProfile(active)
+        _state.update { it.copy(profiles = profiles, activeProfile = active, features = gw.features) }
     }
 
     fun switchProfile(profileId: String) {
         if (profileId == _state.value.activeProfile) return
         // Profile isolation: switching closes the open chat; sessions reload scoped.
         closeChat()
+        gateway?.setActiveProfile(profileId)
         _state.update { it.copy(activeProfile = profileId, sessions = emptyList(), sessionsLoading = true) }
         viewModelScope.launch {
             container.settings.setActiveProfile(profileId)
             refreshSessions()
         }
+    }
+
+    /** Re-read the configured profile names (Settings can change them at runtime). */
+    fun reloadProfiles() {
+        viewModelScope.launch { loadProfiles(_state.value.activeProfile) }
     }
 
     fun refreshSessions(silent: Boolean = false) {
@@ -270,8 +277,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             }
             result.onSuccess { sessions ->
                 _state.update { it.copy(sessions = sortSessions(sessions), sessionsLoading = false) }
-            }.onFailure {
-                _state.update { it.copy(sessionsLoading = false) }
+            }.onFailure { t ->
+                // A silent background poll failing is noise, but a user-driven
+                // refresh (e.g. a profile switch hitting a mirror that 404s
+                // or lacks a profile-scoped key) must say what went wrong.
+                _state.update {
+                    it.copy(
+                        sessionsLoading = false,
+                        notice = if (silent) it.notice else clean(t.message),
+                    )
+                }
             }
         }
     }

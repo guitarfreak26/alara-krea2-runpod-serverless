@@ -139,7 +139,11 @@ private fun MainFlow(container: AppContainer) {
             com.alara.hermes.ui.settings.SettingsScreen(
                 container = container,
                 connection = connection.connection,
-                onBack = { overlay = null },
+                onBack = {
+                    overlay = null
+                    // Profile names may have been edited; refresh the switcher.
+                    viewModel.reloadProfiles()
+                },
             )
         }
         "skills" -> com.alara.hermes.ui.manage.SkillsScreen(viewModel, onBack = { overlay = null })

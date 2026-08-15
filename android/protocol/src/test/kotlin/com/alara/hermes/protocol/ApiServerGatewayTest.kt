@@ -273,6 +273,36 @@ class ApiServerGatewayTest {
     }
 
     @Test
+    fun `named profiles route through p-prefix mirrors`() = runBlocking {
+        val gw = ApiServerGateway(
+            server.url("/"), "api-key", scope,
+            profilesProvider = { listOf("kimi", "grok") },
+        )
+        val profiles = gw.listProfiles()
+        assertEquals(listOf("default", "kimi", "grok"), profiles.map { it.id })
+        assertTrue(profiles.first { it.id == "default" }.isDefault)
+        assertTrue(gw.features.profiles)
+
+        gw.setActiveProfile("kimi")
+        // The switch invalidates capabilities: the mirror re-probes under /p/kimi/.
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        server.enqueue(MockResponse().setBody("""{"data":[{"id":"k1","title":"kimi chat","started_at":1.0}]}"""))
+        val sessions = gw.listSessions("kimi")
+        assertEquals("/p/kimi/v1/capabilities", server.takeRequest().path)
+        assertEquals("/p/kimi/api/sessions", server.takeRequest().path)
+        assertEquals(listOf("k1"), sessions.map { it.key })
+        assertEquals("kimi", sessions.first().profileId)
+
+        // Back to default: prefix drops, capabilities re-probe again.
+        gw.setActiveProfile("default")
+        server.enqueue(MockResponse().setBody(capabilitiesBody()))
+        server.enqueue(MockResponse().setBody("""{"data":[]}"""))
+        gw.listSessions(null)
+        assertEquals("/v1/capabilities", server.takeRequest().path)
+        assertEquals("/api/sessions", server.takeRequest().path)
+    }
+
+    @Test
     fun `features are gated for this surface`() {
         assertTrue(!gateway.features.profiles && !gateway.features.rename)
         // Thinking/fast are supported per-request via model_options.

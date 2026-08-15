@@ -71,6 +71,12 @@ class ApiServerGateway(
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .build(),
+    /**
+     * Profile names configured by the user. The API server has no profile
+     * discovery endpoint; named profiles are reached through the
+     * `/p/{profile}/` URL-prefix mirrors (gateway.multiplex_profiles).
+     */
+    private val profilesProvider: suspend () -> List<String> = { emptyList() },
 ) : HermesGateway {
 
     // Pasted keys often carry stray whitespace/newlines; the server compares
@@ -113,6 +119,7 @@ class ApiServerGateway(
 
     override val features: GatewayFeatures
         get() = GatewayFeatures.API_SERVER.copy(
+            profiles = configuredProfiles.size > 1,
             rename = capabilities?.sessionUpdate == true,
             sessionFlags = capabilities?.sessionUpdate == true && !sessionFlagsRejected,
             // Structured approvals exist only on the /v1/runs stream.
@@ -132,8 +139,27 @@ class ApiServerGateway(
 
     private val handles = ConcurrentHashMap<String, ApiSessionHandle>()
 
+    /** Active profile; non-default names route through `/p/{profile}/` mirrors. */
+    @Volatile private var activeProfile: String = "default"
+
+    /** Profiles from the last [listProfiles] read; gates [GatewayFeatures.profiles]. */
+    @Volatile private var configuredProfiles: List<String> = emptyList()
+
+    override fun setActiveProfile(profileId: String?) {
+        val next = profileId?.trim()?.takeIf { it.isNotEmpty() } ?: "default"
+        if (next != activeProfile) {
+            activeProfile = next
+            // Force a fresh capability probe under the new scope: a named
+            // profile mirror can 404 (unknown profile) or 401 (no
+            // profile-scoped API_SERVER_KEY), and that must fail loudly.
+            capabilities = null
+        }
+    }
+
     private fun url(vararg segments: String): HttpUrl {
         val builder = baseUrl.newBuilder()
+        val profile = activeProfile
+        if (profile != "default") builder.addPathSegments("p/$profile")
         segments.forEach { builder.addPathSegments(it) }
         return builder.build()
     }
@@ -155,7 +181,9 @@ class ApiServerGateway(
     }
 
     override suspend fun connect() {
-        if (_connection.value !is ConnectionState.Connected) {
+        // Re-probe after a profile switch even while nominally connected:
+        // capabilities are per-profile-scope.
+        if (_connection.value !is ConnectionState.Connected || capabilities == null) {
             testConnection()
                 .onSuccess { _connection.value = ConnectionState.Connected(it) }
                 .onFailure { _connection.value = ConnectionState.Failed(it.message ?: "unreachable") }
@@ -200,7 +228,20 @@ class ApiServerGateway(
         label
     }
 
-    override suspend fun listProfiles(): List<HermesProfile> = emptyList()
+    override suspend fun listProfiles(): List<HermesProfile> {
+        val names = runCatching { profilesProvider() }.getOrDefault(emptyList())
+            .map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        // A lone entry means no real choice; the switcher stays hidden.
+        val resolved = if (names.isEmpty()) {
+            emptyList()
+        } else {
+            listOf("default") + names.filter { !it.equals("default", ignoreCase = true) }
+        }
+        configuredProfiles = resolved
+        return resolved.map {
+            HermesProfile(id = it, displayName = it, isDefault = it == "default")
+        }
+    }
 
     private fun dataRows(element: JsonElement): JsonArray = when (element) {
         is JsonArray -> element
@@ -213,7 +254,7 @@ class ApiServerGateway(
     private fun locallyKnownSessions(): List<SessionSummary> = handles.values.map { handle ->
         SessionSummary(
             key = handle.sessionKey,
-            profileId = "default",
+            profileId = activeProfile,
             title = "Conversation ${handle.sessionKey.takeLast(6)}",
             preview = (handle.timeline.value.entries.lastOrNull() as? ChatEntry.Message)
                 ?.text.orEmpty().replace('\n', ' ').take(140),
@@ -258,7 +299,7 @@ class ApiServerGateway(
             val ended = (row as? JsonObject)?.get("ended_at")
             SessionSummary(
                 key = key,
-                profileId = "default",
+                profileId = activeProfile,
                 title = session.title?.takeIf { it.isNotBlank() } ?: "New conversation",
                 preview = (session.preview ?: session.lastMessage).orEmpty()
                     .replace('\n', ' ').take(140),

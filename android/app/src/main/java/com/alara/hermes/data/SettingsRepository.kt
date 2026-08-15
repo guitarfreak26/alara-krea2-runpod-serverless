@@ -58,6 +58,7 @@ class SettingsRepository(
         val NotificationContent = booleanPreferencesKey("notification_content")
         val LastOpenSession = stringPreferencesKey("last_open_session")
         val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
+        val ProfileNames = stringPreferencesKey("profile_names")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -113,6 +114,25 @@ class SettingsRepository(
         context.dataStore.edit { prefs ->
             val current = prefs[Keys.HiddenSources] ?: emptySet()
             prefs[Keys.HiddenSources] = if (key in current) current - key else current + key
+        }
+    }
+
+    /**
+     * Profile names for the API-server surface (kimi, grok, …), user-entered
+     * because that surface has no profile discovery endpoint. Order preserved.
+     */
+    val profileNames: Flow<List<String>> = context.dataStore.data.map { prefs ->
+        (prefs[Keys.ProfileNames] ?: "")
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+    }
+
+    suspend fun setProfileNames(names: List<String>) {
+        context.dataStore.edit { prefs ->
+            prefs[Keys.ProfileNames] = names.map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .joinToString(",")
         }
     }
 

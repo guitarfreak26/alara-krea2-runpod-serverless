@@ -21,11 +21,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -144,6 +146,34 @@ fun SettingsScreen(
                     else -> MaterialTheme.colorScheme.error
                 },
             )
+            if (server?.mode == GatewayMode.API_SERVER) {
+                val profileNames by container.settings.profileNames.collectAsState(initial = null)
+                var profilesText by remember { mutableStateOf<String?>(null) }
+                LaunchedEffect(profileNames) {
+                    if (profilesText == null && profileNames != null) {
+                        profilesText = profileNames!!.joinToString(", ")
+                    }
+                }
+                OutlinedTextField(
+                    value = profilesText ?: "",
+                    onValueChange = { text ->
+                        profilesText = text
+                        scope.launch { container.settings.setProfileNames(text.split(',')) }
+                    },
+                    label = { Text("Profiles") },
+                    supportingText = {
+                        Text(
+                            "Named profiles from desktop, comma-separated (e.g. kimi, grok). " +
+                                "The switcher appears in the menu once any are set. " +
+                                "Needs profile multiplexing + a per-profile API key on the server.",
+                        )
+                    },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 4.dp),
+                )
+            }
 
             SectionDivider()
             SectionLabel("Conversations")

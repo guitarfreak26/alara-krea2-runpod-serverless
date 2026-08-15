@@ -55,6 +55,12 @@ interface HermesGateway {
     suspend fun testConnection(): Result<String>
 
     suspend fun listProfiles(): List<HermesProfile>
+
+    /**
+     * Scope subsequent calls to this profile where the surface routes by
+     * profile (API server `/p/{profile}/` mirrors). No-op elsewhere.
+     */
+    fun setActiveProfile(profileId: String?) {}
     suspend fun listSessions(profileId: String?): List<SessionSummary>
 
     /**

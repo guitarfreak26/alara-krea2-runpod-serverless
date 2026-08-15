@@ -15,6 +15,7 @@ import com.alara.hermes.protocol.wire.HermesRestClient
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 
 /** Manual DI: one container for the whole app. */
 class AppContainer(app: Application) {
@@ -34,7 +35,12 @@ class AppContainer(app: Application) {
     fun buildGateway(url: String, token: String, mode: GatewayMode): HermesGateway? {
         val base = HermesRestClient.parseBaseUrl(url) ?: return null
         return when (mode) {
-            GatewayMode.API_SERVER -> ApiServerGateway(base, token, appScope)
+            GatewayMode.API_SERVER -> ApiServerGateway(
+                base,
+                token,
+                appScope,
+                profilesProvider = { settings.profileNames.first() },
+            )
             GatewayMode.DASHBOARD -> HermesLiveGateway(
                 endpoint = GatewayEndpoint(base, HermesCredential.Token(token)),
                 scope = appScope,

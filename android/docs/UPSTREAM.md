@@ -114,6 +114,16 @@ implements it as the app's primary connection path:
   the connection is the interrupt signal. New sessions use client-generated
   durable ids (`mob-<ts>-<uuid>`).
 - **Models**: `GET /v1/models` → `{data:[{id}]}`.
+- **Profiles**: when `gateway.multiplex_profiles` is on, every route is
+  mirrored under `/p/{profile}/…` (api_server.py profile-prefix middleware);
+  the default profile stays at the root. Named profiles authenticate with a
+  profile-scoped `API_SERVER_KEY` (fail-closed: 401 when unset), and an
+  unknown profile 404s. There is NO profile discovery endpoint on this
+  surface — the desktop's `/api/profiles` lives on the dashboard web server —
+  so the client keeps a user-entered profile list and scopes the whole
+  gateway (capability probe included) through the prefix of the active one.
+  Caveat: with multiplexing OFF the prefix is silently ignored and requests
+  land on the default profile.
 - **Secrets**: the token is Keystore-encrypted at rest, no log statements
   exist in app/protocol code, and every user-facing error string passes
   through `redact()` (strips the token value, `token=`/`ticket=`/`key=`
