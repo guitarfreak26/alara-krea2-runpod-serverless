@@ -115,6 +115,8 @@ fun Composer(
     onStop: () -> Unit,
     draftLoader: suspend (String) -> String,
     onDraftChange: (String, String) -> Unit,
+    pendingShare: com.alara.hermes.SharePayload? = null,
+    onShareConsumed: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -126,50 +128,63 @@ fun Composer(
     var attachmentError by remember { mutableStateOf<String?>(null) }
     var attachMenuOpen by remember { mutableStateOf(false) }
 
+    // Shared by the file picker and the system share-sheet ingress.
+    suspend fun importUri(uri: Uri) {
+        val mime = context.contentResolver.getType(uri)
+        val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: return@runCatching null
+                when {
+                    mime?.startsWith("image/") == true -> {
+                        if (bytes.size > MAX_ATTACHMENT_BYTES || pending.size >= MAX_ATTACHMENTS) {
+                            null
+                        } else {
+                            PendingAttachment(
+                                uri,
+                                OutgoingAttachment(name, mime, Base64.encodeToString(bytes, Base64.NO_WRAP)),
+                            )
+                        }
+                    }
+                    looksTextual(name, mime) -> {
+                        if (bytes.size > MAX_TEXT_FILE_BYTES) {
+                            null
+                        } else {
+                            PendingTextFile(name, bytes.toString(Charsets.UTF_8))
+                        }
+                    }
+                    else -> "unsupported"
+                }
+            }.getOrNull()
+        }.let { loaded ->
+            when (loaded) {
+                is PendingAttachment -> pending += loaded
+                is PendingTextFile -> pendingText += loaded
+                "unsupported" -> attachmentError =
+                    "\"$name\" isn't supported — images and text/code files only on this surface"
+                else -> attachmentError = "Skipped \"$name\" (unreadable or too large)"
+            }
+        }
+    }
+
     val pickFiles = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments(),
     ) { uris ->
         scope.launch {
             attachmentError = null
-            uris.forEach { uri ->
-                val mime = context.contentResolver.getType(uri)
-                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "file"
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                            ?: return@runCatching null
-                        when {
-                            mime?.startsWith("image/") == true -> {
-                                if (bytes.size > MAX_ATTACHMENT_BYTES || pending.size >= MAX_ATTACHMENTS) {
-                                    null
-                                } else {
-                                    PendingAttachment(
-                                        uri,
-                                        OutgoingAttachment(name, mime, Base64.encodeToString(bytes, Base64.NO_WRAP)),
-                                    )
-                                }
-                            }
-                            looksTextual(name, mime) -> {
-                                if (bytes.size > MAX_TEXT_FILE_BYTES) {
-                                    null
-                                } else {
-                                    PendingTextFile(name, bytes.toString(Charsets.UTF_8))
-                                }
-                            }
-                            else -> "unsupported"
-                        }
-                    }.getOrNull()
-                }.let { loaded ->
-                    when (loaded) {
-                        is PendingAttachment -> pending += loaded
-                        is PendingTextFile -> pendingText += loaded
-                        "unsupported" -> attachmentError =
-                            "\"$name\" isn't supported — images and text/code files only on this surface"
-                        else -> attachmentError = "Skipped \"$name\" (unreadable or too large)"
-                    }
-                }
-            }
+            uris.forEach { importUri(it) }
         }
+    }
+
+    // Content shared in from another app lands as if it were picked here.
+    LaunchedEffect(pendingShare) {
+        val payload = pendingShare ?: return@LaunchedEffect
+        payload.text?.takeIf { it.isNotBlank() }?.let { shared ->
+            text = if (text.isBlank()) shared else "$text\n$shared"
+        }
+        payload.uris.forEach { importUri(it) }
+        onShareConsumed()
     }
 
     val pickImages = rememberLauncherForActivityResult(

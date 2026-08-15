@@ -94,6 +94,8 @@ fun ChatPane(
     state: HomeUiState,
     viewModel: HomeViewModel,
     onBack: (() -> Unit)?,
+    pendingShare: com.alara.hermes.SharePayload? = null,
+    onShareConsumed: () -> Unit = {},
 ) {
     val chat = state.chat
     if (chat.sessionKey == null && chat.timeline == null) {
@@ -227,6 +229,8 @@ fun ChatPane(
             onStop = viewModel::interrupt,
             draftLoader = { key -> viewModel.draftFor(key) },
             onDraftChange = viewModel::saveDraft,
+            pendingShare = pendingShare,
+            onShareConsumed = onShareConsumed,
             modifier = Modifier.navigationBarsPadding(),
         )
     }

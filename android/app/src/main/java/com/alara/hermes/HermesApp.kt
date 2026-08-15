@@ -17,6 +17,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 
+/** Text and/or content URIs shared into Hermes via the system share sheet. */
+data class SharePayload(
+    val text: String?,
+    val uris: List<android.net.Uri>,
+)
+
 /** Manual DI: one container for the whole app. */
 class AppContainer(app: Application) {
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -28,6 +34,9 @@ class AppContainer(app: Application) {
 
     /** Session key a notification tap asked us to open. */
     val pendingOpenSession = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+
+    /** Content shared into Hermes from another app, waiting for a target conversation. */
+    val pendingShare = kotlinx.coroutines.flow.MutableStateFlow<SharePayload?>(null)
 
     @Volatile private var gateway: HermesGateway? = null
     @Volatile private var gatewayKey: String? = null

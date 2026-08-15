@@ -315,6 +315,26 @@ class ApiServerGateway(
         }.sortedByDescending { it.updatedAtMs }
     }
 
+    override suspend fun forkSession(sessionKey: String): String {
+        val payload = withContext(Dispatchers.IO) {
+            restClient.newCall(
+                request(url("api/sessions", sessionKey, "fork"))
+                    .post("{}".toRequestBody(jsonMedia)).build(),
+            ).execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    throw HermesHttpException(response.code, "fork failed: HTTP ${response.code}")
+                }
+                json.parseToJsonElement(body)
+            }
+        }
+        val session = (payload as? JsonObject)?.get("session") as? JsonObject
+        val forkId = ((session?.get("id") ?: session?.get("session_id")) as? JsonPrimitive)?.contentOrNull
+            ?: throw HermesRpcException("fork returned no session id")
+        _sessionsChanged.tryEmit(Unit)
+        return forkId
+    }
+
     override suspend fun searchSessions(query: String, profileId: String?): List<SessionSummary> {
         val needle = query.trim().lowercase()
         return listSessions(profileId).filter {
@@ -1257,6 +1277,21 @@ class ApiServerGateway(
             interrupted = true
             activeCall?.cancel()
             streamJob = null
+        }
+
+        override suspend fun steer(text: String): Boolean {
+            // POST /v1/runs/{id}/steer {input} — 409 when the run settled or
+            // the agent refuses mid-run input; both mean "didn't take".
+            val runId = activeRunId ?: return false
+            val body = buildJsonObject { put("input", text) }
+            return runCatching {
+                withContext(Dispatchers.IO) {
+                    restClient.newCall(
+                        request(url("v1/runs", runId, "steer"))
+                            .post(body.toString().toRequestBody(jsonMedia)).build(),
+                    ).execute().use { it.isSuccessful }
+                }
+            }.getOrDefault(false)
         }
 
         override suspend fun respondApproval(entryId: EntryId, choice: String) {

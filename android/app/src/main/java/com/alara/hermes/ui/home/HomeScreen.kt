@@ -1,7 +1,9 @@
 package com.alara.hermes.ui.home
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -35,6 +37,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -50,12 +53,13 @@ import kotlinx.coroutines.launch
  * The hamburger drawer slides over either layout; it never displaces the
  * sessions + conversation panes.
  */
-@OptIn(ExperimentalMaterial3AdaptiveApi::class)
+@OptIn(ExperimentalMaterial3AdaptiveApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     viewModel: com.alara.hermes.ui.HomeViewModel,
     onOpenOverlay: (String) -> Unit,
     openSessionRequests: kotlinx.coroutines.flow.MutableStateFlow<String?>? = null,
+    shareRequests: kotlinx.coroutines.flow.MutableStateFlow<com.alara.hermes.SharePayload?>? = null,
 ) {
     val state by viewModel.state.collectAsState()
     // Two panes from medium width (~600dp) up, not just expanded (840dp+):
@@ -88,6 +92,43 @@ fun HomeScreen(
     // Back in the archived view returns to active conversations, not out of the app.
     BackHandler(enabled = !drawerState.isOpen && state.showArchived && !navigator.canNavigateBack()) {
         viewModel.toggleArchivedView()
+    }
+
+    // Content shared from another app: pick a target conversation, then hand
+    // the payload to the composer of whichever chat opens.
+    val incomingShare = shareRequests?.collectAsState()?.value
+    var shareToApply by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<com.alara.hermes.SharePayload?>(null)
+    }
+    if (incomingShare != null) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { shareRequests.value = null },
+        ) {
+            androidx.compose.foundation.layout.Column(
+                Modifier.padding(bottom = 24.dp),
+            ) {
+                Text(
+                    "Share to Hermes",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                ShareTargetRow("New conversation") {
+                    shareToApply = incomingShare
+                    shareRequests.value = null
+                    viewModel.openSession(null)
+                    scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, "new") }
+                }
+                viewModel.visibleSessions(state).take(8).forEach { session ->
+                    ShareTargetRow(session.title) {
+                        shareToApply = incomingShare
+                        shareRequests.value = null
+                        viewModel.openSession(session.key)
+                        scope.launch { navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, session.key) }
+                    }
+                }
+            }
+        }
     }
 
     // Notification tap -> open that conversation.
@@ -145,6 +186,12 @@ fun HomeScreen(
                             onOpenMenu = { scope.launch { drawerState.open() } },
                             sourceOptions = viewModel.sourceFilterOptions(state),
                             onToggleSource = viewModel::toggleSourceFilter,
+                            onFork = { key ->
+                                viewModel.forkSession(key)
+                                scope.launch {
+                                    navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
+                                }
+                            },
                         )
                     }
                 },
@@ -158,6 +205,8 @@ fun HomeScreen(
                             } else {
                                 null
                             },
+                            pendingShare = shareToApply,
+                            onShareConsumed = { shareToApply = null },
                         )
                     }
                 },
@@ -248,6 +297,20 @@ private fun HomeDrawer(
         Spacer(Modifier.height(12.dp))
         DrawerItem("Settings", Icons.Filled.Settings) { onNavigate("settings") }
     }
+}
+
+@Composable
+private fun ShareTargetRow(label: String, onClick: () -> Unit) {
+    Text(
+        label,
+        style = MaterialTheme.typography.bodyLarge,
+        maxLines = 1,
+        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 24.dp, vertical = 14.dp),
+    )
 }
 
 @Composable

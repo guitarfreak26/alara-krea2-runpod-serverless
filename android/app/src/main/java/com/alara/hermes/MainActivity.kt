@@ -37,6 +37,28 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         consumeOpenSessionIntent(intent)
+        consumeShareIntent(intent)
+    }
+
+    /** ACTION_SEND / SEND_MULTIPLE from other apps → pending share payload. */
+    private fun consumeShareIntent(intent: Intent?) {
+        val payload = when (intent?.action) {
+            Intent.ACTION_SEND -> {
+                @Suppress("DEPRECATION")
+                val uri = intent.getParcelableExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                val text = intent.getStringExtra(Intent.EXTRA_TEXT)
+                if (uri == null && text.isNullOrBlank()) null else SharePayload(text, listOfNotNull(uri))
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                @Suppress("DEPRECATION")
+                val uris = intent.getParcelableArrayListExtra<android.net.Uri>(Intent.EXTRA_STREAM)
+                    .orEmpty()
+                if (uris.isEmpty()) null else SharePayload(intent.getStringExtra(Intent.EXTRA_TEXT), uris)
+            }
+            else -> null
+        } ?: return
+        (application as HermesApp).container.pendingShare.value = payload
+        intent?.action = Intent.ACTION_MAIN // consumed; don't re-apply on recreation
     }
 
     private fun consumeOpenSessionIntent(intent: Intent?) {
@@ -52,6 +74,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         val container = (application as HermesApp).container
         consumeOpenSessionIntent(intent)
+        consumeShareIntent(intent)
         setContent {
             val onboarded by container.settings.onboarded.collectAsState(initial = null)
             val appearance by container.settings.appearance.collectAsState(initial = null)
@@ -153,6 +176,7 @@ private fun MainFlow(container: AppContainer) {
             viewModel,
             onOpenOverlay = { overlay = it },
             openSessionRequests = container.pendingOpenSession,
+            shareRequests = container.pendingShare,
         )
     }
 }

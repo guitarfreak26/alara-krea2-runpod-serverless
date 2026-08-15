@@ -31,6 +31,15 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material.icons.outlined.Archive
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Monitor
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Smartphone
+import androidx.compose.material.icons.outlined.SportsEsports
+import androidx.compose.material.icons.outlined.NearMe
+import androidx.compose.material.icons.outlined.Tag
+import androidx.compose.material.icons.outlined.Terminal
+import androidx.compose.material.icons.outlined.ViewKanban
 import androidx.compose.material.icons.filled.Unarchive
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -81,6 +90,7 @@ fun SessionListPane(
     onOpenMenu: () -> Unit,
     sourceOptions: List<String> = emptyList(),
     onToggleSource: (String) -> Unit = {},
+    onFork: (String) -> Unit = {},
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     var searchOpen by rememberSaveable { mutableStateOf(false) }
@@ -304,6 +314,10 @@ fun SessionListPane(
                         contextSession = null
                     }
                 }
+                SheetAction("Fork") {
+                    onFork(session.key)
+                    contextSession = null
+                }
                 SheetAction("Delete") {
                     deleteTarget = session
                     contextSession = null
@@ -516,16 +530,14 @@ private fun SessionRow(
         Spacer(Modifier.height(3.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             session.source?.takeIf { it.isNotBlank() && it != "android" }?.let { source ->
-                Text(
-                    source,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier
-                        .background(
-                            MaterialTheme.colorScheme.surfaceContainer,
-                            RoundedCornerShape(4.dp),
-                        )
-                        .padding(horizontal = 5.dp, vertical = 1.dp),
+                // Colored glyph instead of a text pill: rows scan by shape and
+                // colour without adding more words to the list.
+                val (icon, tint) = sourceGlyph(source)
+                Icon(
+                    icon,
+                    contentDescription = source,
+                    tint = tint,
+                    modifier = Modifier.size(14.dp),
                 )
                 Spacer(Modifier.width(6.dp))
             }
@@ -539,6 +551,25 @@ private fun SessionRow(
         }
     }
 }
+
+/** Stable icon + accent per source group; unknown sources hash to a hue. */
+private fun sourceGlyph(source: String): Pair<androidx.compose.ui.graphics.vector.ImageVector, androidx.compose.ui.graphics.Color> =
+    when (source.trim().lowercase()) {
+        "matrix" -> Icons.Outlined.ChatBubbleOutline to androidx.compose.ui.graphics.Color(0xFF6BBF8A)
+        "discord" -> Icons.Outlined.SportsEsports to androidx.compose.ui.graphics.Color(0xFF7289DA)
+        "telegram" -> Icons.Outlined.NearMe to androidx.compose.ui.graphics.Color(0xFF4FA8D8)
+        "cli", "tui" -> Icons.Outlined.Terminal to androidx.compose.ui.graphics.Color(0xFF9E9E9E)
+        "api_server", "api" -> Icons.Outlined.Smartphone to androidx.compose.ui.graphics.Color(0xFF9A86E8)
+        "cron" -> Icons.Outlined.Schedule to androidx.compose.ui.graphics.Color(0xFFD8A04D)
+        "kanban" -> Icons.Outlined.ViewKanban to androidx.compose.ui.graphics.Color(0xFF57B8C4)
+        "slack" -> Icons.Outlined.Tag to androidx.compose.ui.graphics.Color(0xFFE0AA4E)
+        "webui", "dashboard", "desktop" -> Icons.Outlined.Monitor to androidx.compose.ui.graphics.Color(0xFF8AB4F8)
+        else -> Icons.Outlined.Tag to androidx.compose.ui.graphics.Color.hsl(
+            hue = (source.hashCode().toUInt() % 360u).toFloat(),
+            saturation = 0.45f,
+            lightness = 0.65f,
+        )
+    }
 
 @Composable
 fun RunningIndicator() {

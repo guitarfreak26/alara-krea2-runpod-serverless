@@ -1,6 +1,7 @@
 package com.alara.hermes.ui.chat
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
@@ -49,10 +51,13 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import androidx.compose.runtime.rememberCoroutineScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.alara.hermes.util.MediaKind
 import com.alara.hermes.util.MediaLink
+import com.alara.hermes.util.MediaSaver
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
 /**
@@ -143,13 +148,30 @@ private fun InlineImage(url: String, gatewayHost: String?, authHeader: String?) 
                     contentScale = ContentScale.Fit,
                     modifier = Modifier.fillMaxSize(),
                 )
+                val scope = rememberCoroutineScope()
+                val headers = headersFor(url, gatewayHost, authHeader)
                 Row(Modifier.align(Alignment.TopEnd).padding(8.dp)) {
                     IconButton(onClick = {
-                        val intent = Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_TEXT, url)
+                        scope.launch {
+                            MediaSaver.saveToGallery(context, url, headers)
+                                .onSuccess { Toast.makeText(context, "Saved \"$it\"", Toast.LENGTH_SHORT).show() }
+                                .onFailure { Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show() }
                         }
-                        context.startActivity(Intent.createChooser(intent, "Share image"))
+                    }) {
+                        Icon(Icons.Filled.Download, contentDescription = "Save to gallery", tint = Color.White)
+                    }
+                    IconButton(onClick = {
+                        scope.launch {
+                            // Share the actual file; fall back to the link if
+                            // the download fails.
+                            MediaSaver.shareFile(context, url, headers).onFailure {
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, url)
+                                }
+                                context.startActivity(Intent.createChooser(intent, "Share image"))
+                            }
+                        }
                     }) {
                         Icon(Icons.Filled.Share, contentDescription = "Share", tint = Color.White)
                     }
@@ -197,6 +219,35 @@ private fun InlineVideo(url: String, gatewayHost: String?, authHeader: String?) 
                     .align(Alignment.BottomStart)
                     .padding(10.dp),
             )
+            val context = LocalContext.current
+            val scope = rememberCoroutineScope()
+            Row(Modifier.align(Alignment.TopEnd)) {
+                IconButton(onClick = {
+                    scope.launch {
+                        MediaSaver.saveToGallery(context, url, headersFor(url, gatewayHost, authHeader))
+                            .onSuccess { Toast.makeText(context, "Saved \"$it\"", Toast.LENGTH_SHORT).show() }
+                            .onFailure { Toast.makeText(context, "Save failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) {
+                    Icon(
+                        Icons.Filled.Download,
+                        contentDescription = "Save video",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = {
+                    scope.launch {
+                        MediaSaver.shareFile(context, url, headersFor(url, gatewayHost, authHeader))
+                            .onFailure { Toast.makeText(context, "Share failed", Toast.LENGTH_SHORT).show() }
+                    }
+                }) {
+                    Icon(
+                        Icons.Filled.Share,
+                        contentDescription = "Share video",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
     } else {
         VideoPlayer(url, gatewayHost, authHeader)

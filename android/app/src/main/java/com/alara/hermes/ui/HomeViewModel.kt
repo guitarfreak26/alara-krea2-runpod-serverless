@@ -375,9 +375,42 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val h = handle ?: return
         if (_state.value.chat.loadFailed) return
         if (text.isBlank() && attachments.isEmpty()) return
+        // A message typed while a turn is RUNNING steers the live run instead
+        // of queuing a second turn (desktop /steer semantics).
+        if (_state.value.chat.timeline?.running == true && attachments.isEmpty()) {
+            viewModelScope.launch {
+                val accepted = runCatching { h.steer(text) }.getOrDefault(false)
+                _state.update {
+                    it.copy(
+                        notice = if (accepted) {
+                            "Steered the running turn"
+                        } else {
+                            "Couldn't steer — wait for the turn to finish and send again"
+                        },
+                    )
+                }
+            }
+            return
+        }
+        val needsTitle = _state.value.chat.title.let { it.isBlank() || it == "New conversation" } &&
+            _state.value.chat.timeline?.entries.orEmpty().none {
+                it is com.alara.hermes.protocol.ChatEntry.Message &&
+                    it.role == com.alara.hermes.protocol.Role.USER
+            }
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }
         viewModelScope.launch {
             runCatching { h.send(text, attachments) }
+                .onSuccess {
+                    // The server never titles sessions minted from this surface;
+                    // name it from the first message like desktop's auto-title.
+                    if (needsTitle && text.isNotBlank() && gateway?.features?.rename == true) {
+                        val derived = deriveTitle(text)
+                        if (derived.isNotBlank()) {
+                            runCatching { gateway?.renameSession(h.sessionKey, derived) }
+                            _state.update { it.copy(chat = it.chat.copy(title = derived)) }
+                        }
+                    }
+                }
                 .onFailure { t ->
                     _state.update {
                         it.copy(chat = it.chat.copy(error = clean("Send failed: ${t.message}. Not re-sent automatically.")))
@@ -386,6 +419,29 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             _state.update { it.copy(chat = it.chat.copy(sending = false)) }
             container.drafts.save(h.sessionKey, "")
             refreshSessions(silent = true)
+        }
+    }
+
+    /** First line of the first message, clipped at a word boundary. */
+    private fun deriveTitle(text: String): String {
+        val line = text.trim().lineSequence().firstOrNull()?.trim().orEmpty()
+        if (line.length <= 48) return line
+        val cut = line.take(48).substringBeforeLast(' ').ifBlank { line.take(48) }
+        return "$cut…"
+    }
+
+    fun forkSession(sessionKey: String) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            runCatching { gw.forkSession(sessionKey) }
+                .onSuccess { forkKey ->
+                    _state.update { it.copy(notice = "Forked — opening the branch") }
+                    refreshSessions(silent = true)
+                    openSession(forkKey)
+                }
+                .onFailure { t ->
+                    _state.update { it.copy(notice = clean("Fork failed: ${t.message}")) }
+                }
         }
     }
 

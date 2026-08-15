@@ -21,6 +21,13 @@ interface SessionHandle {
      */
     suspend fun send(text: String, attachments: List<OutgoingAttachment> = emptyList())
     suspend fun interrupt()
+
+    /**
+     * Inject guidance into the RUNNING turn without stopping it. Returns true
+     * when the server accepted the steer; false when unsupported or the run
+     * already settled.
+     */
+    suspend fun steer(text: String): Boolean = false
     suspend fun respondApproval(entryId: EntryId, choice: String)
     suspend fun setModel(model: String, provider: String?)
     suspend fun setReasoning(level: String)
@@ -77,6 +84,14 @@ interface HermesGateway {
 
     suspend fun renameSession(sessionKey: String, title: String)
     suspend fun deleteSession(sessionKey: String)
+
+    /**
+     * Branch a conversation: the server copies the transcript into a new
+     * session (marking the source as branched, CLI semantics) and returns the
+     * new session's key. Throws where the surface has no fork endpoint.
+     */
+    suspend fun forkSession(sessionKey: String): String =
+        throw com.alara.hermes.protocol.wire.HermesRpcException("Fork is not supported on this surface")
 
     /** Durable per-session flags shared with the desktop sidebar. */
     suspend fun setPinned(sessionKey: String, pinned: Boolean)
