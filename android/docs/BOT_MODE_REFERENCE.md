@@ -1,7 +1,26 @@
-# Bot Mode — design source of truth (status: awaiting desktop reference)
+# Bot Mode — design source of truth
 
-The mobile Bot Mode must follow the **Hermes Desktop Bot Mode** Alan uses
-(hermes-bots desktop plugin), not a generic bot roster.
+The mobile Bot Mode follows the **Hermes Desktop Bot Mode** plugin. The
+public upstream is https://github.com/NousResearch/Hermes-Bot-Mode
+(plugin.js + docs/bots-pane.png) and is the primary design reference.
+
+## Contract confirmed from upstream source
+
+- Canonical conversation: ONE per bot, created via `session.create
+  {profile, title: "Bot Chat"}` (optionally born `hidden` from the global
+  sidebar). Mobile finds it by title and creates it on demand.
+- Roster row: avatar + bot name + latest-message preview + timestamp.
+- "Active now" presence: gateway-busy profile plus any bot that wrote in
+  the last 90 seconds (`ACTIVE_WINDOW_S = 90`); never reorders the roster.
+- Avatars: flat geometric body + two eyes. Default shape =
+  `hash(name) % [circle, squircle, pill, triangle, hexagon, cloud, drop]`
+  with `hash = hash*31 + charCode (uint32)`; default body colour
+  `#f97316`. Custom colours/images/pets live in desktop **plugin storage**
+  — not on the server — so mobile renders default looks for customized
+  bots. Mobile reimplements the shape+eyes system with the same hash.
+- Bot-to-bot messages arrive prefixed `Message from 🤖 <name> (@<name>):`.
+- @mentions hand off to another bot and report back (desktop-side CLI
+  behaviour; mobile displays the transcript it produces).
 
 ## Reference material still needed
 

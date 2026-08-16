@@ -125,13 +125,92 @@ fun BotsScreen(
     }
 }
 
-/** Stable identity colour per bot, derived from the profile name. */
-private fun identityColor(id: String): Color =
-    Color.hsl(
-        hue = (id.hashCode().toUInt() % 360u).toFloat(),
-        saturation = 0.45f,
-        lightness = 0.55f,
-    )
+/*
+ * Avatar identity mirrors the native Bot Mode plugin
+ * (NousResearch/Hermes-Bot-Mode): a flat geometric body with two eyes.
+ * Shape comes from the same 31-multiplier name hash over the same shape
+ * list, and the default body colour is the plugin's default orange, so an
+ * uncustomized bot looks the same here as on desktop. (Custom colours,
+ * uploaded images and pets live in desktop plugin storage the mobile app
+ * cannot read — those bots fall back to their default look here.)
+ */
+private val AVATAR_SHAPES = listOf("circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop")
+private val AVATAR_BODY = Color(0xFFF97316)
+private val AVATAR_INK = Color(0xFF1C1917)
+
+private fun defaultShapeFor(name: String): String {
+    var hash = 0u
+    for (ch in name) hash = hash * 31u + ch.code.toUInt()
+    return AVATAR_SHAPES[(hash % AVATAR_SHAPES.size.toUInt()).toInt()]
+}
+
+@Composable
+private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
+    val shape = defaultShapeFor(name)
+    androidx.compose.foundation.Canvas(Modifier.size(sizeDp)) {
+        val w = size.width
+        val h = size.height
+        when (shape) {
+            "circle" -> drawCircle(AVATAR_BODY, radius = w / 2)
+            "squircle" -> drawRoundRect(
+                AVATAR_BODY,
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.3f),
+            )
+            "pill" -> drawRoundRect(
+                AVATAR_BODY,
+                topLeft = androidx.compose.ui.geometry.Offset(0f, h * 0.1f),
+                size = androidx.compose.ui.geometry.Size(w, h * 0.8f),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.4f),
+            )
+            "triangle" -> drawPath(
+                androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w / 2, 0f); lineTo(w, h); lineTo(0f, h); close()
+                },
+                AVATAR_BODY,
+            )
+            "hexagon" -> drawPath(
+                androidx.compose.ui.graphics.Path().apply {
+                    moveTo(w * 0.5f, 0f); lineTo(w * 0.93f, h * 0.25f)
+                    lineTo(w * 0.93f, h * 0.75f); lineTo(w * 0.5f, h)
+                    lineTo(w * 0.07f, h * 0.75f); lineTo(w * 0.07f, h * 0.25f); close()
+                },
+                AVATAR_BODY,
+            )
+            "cloud" -> {
+                drawCircle(AVATAR_BODY, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.3f, h * 0.62f))
+                drawCircle(AVATAR_BODY, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.7f, h * 0.62f))
+                drawCircle(AVATAR_BODY, radius = w * 0.32f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.42f))
+                drawRoundRect(
+                    AVATAR_BODY,
+                    topLeft = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.5f),
+                    size = androidx.compose.ui.geometry.Size(w * 0.64f, h * 0.38f),
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.19f),
+                )
+            }
+            "drop" -> {
+                drawCircle(AVATAR_BODY, radius = w * 0.38f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.6f))
+                drawPath(
+                    androidx.compose.ui.graphics.Path().apply {
+                        moveTo(w * 0.5f, 0f); lineTo(w * 0.79f, h * 0.5f)
+                        lineTo(w * 0.21f, h * 0.5f); close()
+                    },
+                    AVATAR_BODY,
+                )
+            }
+        }
+        // Eyes: same flat two-dot face as the desktop shapes; low-set on
+        // bottom-heavy bodies.
+        val eyeY = when (shape) {
+            "triangle" -> h * 0.7f
+            "drop" -> h * 0.62f
+            "cloud" -> h * 0.55f
+            else -> h * 0.5f
+        }
+        val eyeR = w * 0.065f
+        drawCircle(AVATAR_INK, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.38f, eyeY))
+        drawCircle(AVATAR_INK, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.62f, eyeY))
+    }
+}
 
 @Composable
 private fun BotRow(
@@ -152,19 +231,7 @@ private fun BotRow(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Box {
-            Box(
-                Modifier
-                    .size(44.dp)
-                    .background(identityColor(profile.id), CircleShape),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    profile.displayName.take(1).uppercase(),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White,
-                )
-            }
+            BotAvatar(profile.id, 44.dp)
             Box(
                 Modifier
                     .align(Alignment.BottomEnd)
