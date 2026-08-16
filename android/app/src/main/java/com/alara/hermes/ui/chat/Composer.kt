@@ -390,9 +390,12 @@ fun Composer(
                             androidx.compose.material3.DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text("@${member.displayName}")
+                                        Text("@${member.mentionLabel}")
                                         Text(
-                                            member.role,
+                                            listOfNotNull(
+                                                member.displayName.takeIf { it != member.mentionLabel },
+                                                member.role,
+                                            ).joinToString("  ·  "),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         )
@@ -401,7 +404,7 @@ fun Composer(
                                 onClick = {
                                     mentionMenuOpen = false
                                     val prefix = if (text.isEmpty() || text.endsWith(" ")) "" else " "
-                                    text += "$prefix@${member.displayName} "
+                                    text += "$prefix@${member.mentionLabel} "
                                 },
                             )
                         }

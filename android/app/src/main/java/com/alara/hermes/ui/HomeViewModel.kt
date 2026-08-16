@@ -501,7 +501,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         // never reaches the server as metadata.
         val room = _state.value.chat.room
         val mentions = room?.members.orEmpty().filter { member ->
-            text.contains("@${member.displayName}", ignoreCase = true) ||
+            text.contains("@${member.mentionLabel}", ignoreCase = true) ||
+                text.contains("@${member.displayName}", ignoreCase = true) ||
                 text.contains("@${member.profileId}", ignoreCase = true)
         }.map { it.profileId }
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }

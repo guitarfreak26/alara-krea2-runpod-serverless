@@ -20,6 +20,10 @@ data class HermesProfile(
     val preview: String? = null,
     val lastActiveMs: Long? = null,
     val busy: Boolean? = null,
+    /** Public @handle (presentation metadata; never derived from the id). */
+    val handle: String? = null,
+    /** Server-assigned roster group (e.g. "Seoyeon Team"). */
+    val group: String? = null,
 )
 
 /** One member of a server-defined Bot Mode room. */
@@ -31,7 +35,11 @@ data class RoomMember(
     val avatarShape: String? = null,
     val avatarColor: String? = null,
     val avatarUrl: String? = null,
-)
+    /** Public @handle; falls back to displayName for mention insertion. */
+    val handle: String? = null,
+) {
+    val mentionLabel: String get() = handle ?: displayName
+}
 
 /**
  * A server-backed Bot Mode room (see docs/BOT_ROOMS_API.md). Existence,

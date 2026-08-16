@@ -315,7 +315,7 @@ class ApiServerGatewayTest {
             MockResponse().setBody(
                 """{"profiles":[
                     {"name":"default","api_prefix":"","is_default":true,
-                     "display_name":"Sol","description":"Manager",
+                     "display_name":"Sol","handle":"Sol","group":"Core","description":"Manager",
                      "avatar":{"shape":"hexagon","color":"#8b5cf6"},
                      "preview":"On it — rendering now","last_active":1755400000.0,"busy":true},
                     {"name":"kimi","api_prefix":"/p/kimi"},
@@ -330,6 +330,8 @@ class ApiServerGatewayTest {
         // Enriched metadata parses; the minimal rows still work beside it.
         val sol = profiles.first()
         assertEquals("Sol", sol.displayName)
+        assertEquals("Sol", sol.handle)
+        assertEquals("Core", sol.group)
         assertEquals("hexagon", sol.avatarShape)
         assertEquals("#8b5cf6", sol.avatarColor)
         assertEquals("On it — rendering now", sol.preview)

@@ -320,6 +320,8 @@ class ApiServerGateway(
                 busy = str("busy")?.toBooleanStrictOrNull()
                     ?: str("running")?.toBooleanStrictOrNull()
                     ?: str("active")?.toBooleanStrictOrNull(),
+                handle = str("handle"),
+                group = str("group"),
             )
         }
         if (profiles.isNotEmpty()) profilePrefixes = prefixes
@@ -428,6 +430,7 @@ class ApiServerGateway(
                     avatarShape = astr("shape"),
                     avatarColor = astr("color"),
                     avatarUrl = astr("image_url"),
+                    handle = mstr("handle"),
                 )
             }
             val manager = str("manager")
