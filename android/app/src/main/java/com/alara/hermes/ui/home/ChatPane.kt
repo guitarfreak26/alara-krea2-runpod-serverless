@@ -160,6 +160,7 @@ fun ChatPane(
                                 entry,
                                 mediaAuth,
                                 streamLive = state.chatSettings.streamLive,
+                                mediaPathUrl = viewModel.mediaUrlBuilder(),
                             )
                             is ChatEntry.Reasoning -> ReasoningRow(entry)
                             is ChatEntry.ToolRun -> ToolRow(entry)

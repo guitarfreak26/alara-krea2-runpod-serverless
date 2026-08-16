@@ -8,6 +8,10 @@ data class HermesProfile(
     val id: String,
     val displayName: String = id,
     val isDefault: Boolean = false,
+    /** Configured model, when /v1/profiles advertises it. */
+    val model: String? = null,
+    /** Role/description line for rosters (Bot Mode). */
+    val description: String? = null,
 )
 
 /** Where a session's turns have historically originated. */

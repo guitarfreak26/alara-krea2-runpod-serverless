@@ -354,6 +354,22 @@ class ApiServerGatewayTest {
     }
 
     @Test
+    fun `media urls are profile scoped and never carry the token`() = runBlocking {
+        val gw = ApiServerGateway(server.url("/"), "api-key", scope)
+        val root = gw.mediaUrl("/opt/data/media-jobs/a b/final-reel.mp4")!!
+        assertTrue(root.endsWith("/v1/media?path=%2Fopt%2Fdata%2Fmedia-jobs%2Fa%20b%2Ffinal-reel.mp4"))
+        assertTrue(!root.contains("api-key"))
+
+        gw.setActiveProfile("solseoyeon")
+        val scoped = gw.mediaUrl("/opt/data/media-jobs/x.mp4")!!
+        assertTrue(scoped.contains("/p/solseoyeon/v1/media?path="))
+        // Another profile can never reuse the previous profile's route.
+        gw.setActiveProfile("malgrok")
+        val other = gw.mediaUrl("/opt/data/media-jobs/x.mp4")!!
+        assertTrue(other.contains("/p/malgrok/") && !other.contains("solseoyeon"))
+    }
+
+    @Test
     fun `features are gated for this surface`() {
         assertTrue(!gateway.features.profiles && !gateway.features.rename)
         // Thinking/fast are supported per-request via model_options.

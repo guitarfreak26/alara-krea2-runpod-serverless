@@ -66,6 +66,7 @@ fun MessageBubble(
     entry: ChatEntry.Message,
     mediaAuth: MediaAuth? = null,
     streamLive: Boolean = true,
+    mediaPathUrl: ((String) -> String?)? = null,
 ) {
     val context = LocalContext.current
     var actionsOpen by remember { mutableStateOf(false) }
@@ -149,8 +150,10 @@ fun MessageBubble(
                                 )
                             }
                             else -> {
+                                // MEDIA: directives render as players, not paths.
+                                val display = com.alara.hermes.protocol.MediaDirectives.strip(entry.text)
                                 Markdown(
-                                    content = entry.text,
+                                    content = display.ifBlank { entry.text },
                                     components = markdownComponents(
                                         codeBlock = codeBlockWithCopy,
                                         codeFence = codeFenceWithCopy,
@@ -158,7 +161,7 @@ fun MessageBubble(
                                     typography = chatMarkdownTypography(),
                                 )
                                 MediaGallery(
-                                    links = extractMediaLinks(entry.text),
+                                    links = extractMediaLinks(entry.text, mediaPathUrl),
                                     gatewayHost = mediaAuth?.host,
                                     authHeader = mediaAuth?.header,
                                 )

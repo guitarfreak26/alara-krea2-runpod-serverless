@@ -355,6 +355,41 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(chat = ChatUiState(), models = emptyList()) }
     }
 
+    /** Builds authenticated gateway URLs for MEDIA: directive paths. */
+    fun mediaUrlBuilder(): ((String) -> String?)? =
+        gateway?.let { gw -> { path: String -> gw.mediaUrl(path) } }
+
+    /**
+     * Bot Mode: open (or start) the profile's one canonical "Bot Chat"
+     * conversation. Existing chats are found by title; a missing one opens a
+     * fresh session that gets titled "Bot Chat" on its first message.
+     */
+    fun openBotChat(profileId: String) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            if (profileId != _state.value.activeProfile) {
+                closeChat()
+                gw.setActiveProfile(profileId)
+                container.settings.setActiveProfile(profileId)
+                _state.update {
+                    it.copy(activeProfile = profileId, sessions = emptyList(), sessionsLoading = true)
+                }
+            }
+            val sessions = runCatching { gw.listSessions(profileId) }.getOrDefault(emptyList())
+            _state.update { it.copy(sessions = sortSessions(sessions), sessionsLoading = false) }
+            val existing = sessions.firstOrNull {
+                it.title.equals(BOT_CHAT_TITLE, ignoreCase = true) && !it.archived
+            }
+            container.pendingOpenSession.value = existing?.key ?: NEW_BOT_CHAT
+        }
+    }
+
+    /** Start the not-yet-existing canonical Bot Chat for the active profile. */
+    fun openNewBotChat() {
+        openSession(null)
+        _state.update { it.copy(chat = it.chat.copy(title = BOT_CHAT_TITLE)) }
+    }
+
     /** Retry loading a conversation whose history fetch failed. */
     fun retryLoad() {
         val h = handle ?: return
@@ -392,7 +427,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             }
             return
         }
-        val needsTitle = _state.value.chat.title.let { it.isBlank() || it == "New conversation" } &&
+        val currentTitle = _state.value.chat.title
+        val needsTitle = (currentTitle.isBlank() || currentTitle == "New conversation" ||
+            currentTitle == BOT_CHAT_TITLE) &&
             _state.value.chat.timeline?.entries.orEmpty().none {
                 it is com.alara.hermes.protocol.ChatEntry.Message &&
                     it.role == com.alara.hermes.protocol.Role.USER
@@ -404,7 +441,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     // The server never titles sessions minted from this surface;
                     // name it from the first message like desktop's auto-title.
                     if (needsTitle && text.isNotBlank() && gateway?.features?.rename == true) {
-                        val derived = deriveTitle(text)
+                        // Bot Chat keeps its canonical name; everything else is
+                        // titled from the first message.
+                        val derived = if (currentTitle == BOT_CHAT_TITLE) {
+                            BOT_CHAT_TITLE
+                        } else {
+                            deriveTitle(text)
+                        }
                         if (derived.isNotBlank()) {
                             runCatching { gateway?.renameSession(h.sessionKey, derived) }
                             _state.update { it.copy(chat = it.chat.copy(title = derived)) }
@@ -570,6 +613,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     }
 
     companion object {
+        const val BOT_CHAT_TITLE = "Bot Chat"
+
+        /** Sentinel routed through pendingOpenSession for a fresh Bot Chat. */
+        const val NEW_BOT_CHAT = "::new-bot-chat::"
+
         fun factory(container: AppContainer) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T =

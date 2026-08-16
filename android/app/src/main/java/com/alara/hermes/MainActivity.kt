@@ -180,6 +180,14 @@ private fun MainFlow(container: AppContainer) {
                 },
             )
         }
+        "bots" -> com.alara.hermes.ui.bots.BotsScreen(
+            viewModel,
+            onBack = { overlay = null },
+            onOpenBot = { profile ->
+                viewModel.openBotChat(profile.id)
+                overlay = null
+            },
+        )
         "skills" -> com.alara.hermes.ui.manage.SkillsScreen(viewModel, onBack = { overlay = null })
         "automations" -> com.alara.hermes.ui.manage.AutomationsScreen(viewModel, onBack = { overlay = null })
         "usage" -> com.alara.hermes.ui.manage.UsageScreen(viewModel, onBack = { overlay = null })

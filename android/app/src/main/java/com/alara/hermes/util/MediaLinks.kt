@@ -23,17 +23,32 @@ private fun classify(url: String): MediaKind? {
 }
 
 /**
- * Media referenced by a message: markdown image syntax plus bare http(s) URLs
- * whose file extension marks them as image/video/audio. Order preserved,
- * duplicates removed.
+ * Media referenced by a message: markdown image syntax, bare http(s) URLs
+ * whose file extension marks them as image/video/audio, and Hermes
+ * `MEDIA:/abs/path` directives resolved through [mediaPathUrl] onto the
+ * authenticated gateway media route. Order preserved, duplicates removed.
  */
-fun extractMediaLinks(text: String): List<MediaLink> {
-    if (!text.contains("http")) return emptyList()
-    val urls = LinkedHashSet<String>()
-    MARKDOWN_IMAGE.findAll(text).forEach { urls += it.groupValues[1] }
-    URL_PATTERN.findAll(text).forEach { match ->
-        // Trailing punctuation from prose ("…file.mp4.") is not part of the URL.
-        urls += match.value.trimEnd('.', ',', ';', ':', '!', '?')
+fun extractMediaLinks(
+    text: String,
+    mediaPathUrl: ((String) -> String?)? = null,
+): List<MediaLink> {
+    val links = LinkedHashMap<String, MediaKind>()
+    if (text.contains("http")) {
+        val urls = LinkedHashSet<String>()
+        MARKDOWN_IMAGE.findAll(text).forEach { urls += it.groupValues[1] }
+        URL_PATTERN.findAll(text).forEach { match ->
+            // Trailing punctuation from prose ("…file.mp4.") is not part of the URL.
+            urls += match.value.trimEnd('.', ',', ';', ':', '!', '?')
+        }
+        urls.forEach { url -> classify(url)?.let { links[url] = it } }
     }
-    return urls.mapNotNull { url -> classify(url)?.let { MediaLink(url, it) } }
+    if (mediaPathUrl != null) {
+        com.alara.hermes.protocol.MediaDirectives.extractPaths(text).forEach { path ->
+            // Classify by the FILE path — the built gateway URL hides the
+            // extension inside the ?path= query parameter.
+            val kind = classify(path) ?: return@forEach
+            mediaPathUrl(path)?.let { links[it] = kind }
+        }
+    }
+    return links.map { (url, kind) -> MediaLink(url, kind) }
 }

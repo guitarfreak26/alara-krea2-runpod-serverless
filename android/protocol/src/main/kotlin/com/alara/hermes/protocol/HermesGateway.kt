@@ -97,6 +97,14 @@ interface HermesGateway {
     suspend fun setPinned(sessionKey: String, pinned: Boolean)
     suspend fun setArchived(sessionKey: String, archived: Boolean)
 
+    /**
+     * Authenticated URL for a server-side media file (MEDIA: directives),
+     * scoped to the active profile's api_prefix. Null when the surface has no
+     * media route. The bearer must be attached as a header by the player —
+     * this URL never embeds credentials.
+     */
+    fun mediaUrl(path: String): String? = null
+
     /** Installed skills, read-only. */
     suspend fun listSkills(): List<SkillInfo>
 

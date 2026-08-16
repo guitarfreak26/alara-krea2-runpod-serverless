@@ -12,6 +12,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -129,11 +130,15 @@ fun HomeScreen(
         }
     }
 
-    // Notification tap -> open that conversation.
+    // Notification tap / Bot Mode pick -> open that conversation.
     LaunchedEffect(openSessionRequests) {
         openSessionRequests?.collect { key ->
             if (key != null) {
-                viewModel.openSession(key)
+                if (key == com.alara.hermes.ui.HomeViewModel.NEW_BOT_CHAT) {
+                    viewModel.openNewBotChat()
+                } else {
+                    viewModel.openSession(key)
+                }
                 navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
                 openSessionRequests.value = null
             }
@@ -226,6 +231,7 @@ private fun HomeDrawer(
         // Profile switching lives in the header title dropdown, not here.
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(12.dp))
+        DrawerItem("Bots", Icons.Outlined.SmartToy) { onNavigate("bots") }
         if (state.features.skills) {
             DrawerItem("Skills", Icons.Outlined.AutoAwesome) { onNavigate("skills") }
         }

@@ -173,6 +173,17 @@ class ApiServerGateway(
         return builder.build()
     }
 
+    override fun mediaUrl(path: String): String? {
+        val trimmed = path.trim()
+        if (trimmed.isEmpty()) return null
+        // addQueryParameter URL-encodes the filesystem path; the profile
+        // prefix comes from url() so media stays scoped like every route.
+        return url("v1/media").newBuilder()
+            .addQueryParameter("path", trimmed)
+            .build()
+            .toString()
+    }
+
     /** Root-listener URL, ignoring the active profile (discovery endpoints). */
     private fun rootUrl(vararg segments: String): HttpUrl {
         val builder = baseUrl.newBuilder()
@@ -287,6 +298,8 @@ class ApiServerGateway(
                 id = name,
                 displayName = str("display_name")?.takeIf { it.isNotBlank() } ?: name,
                 isDefault = str("is_default")?.toBooleanStrictOrNull() ?: (name == "default"),
+                model = str("model"),
+                description = str("description") ?: str("role"),
             )
         }
         if (profiles.isNotEmpty()) profilePrefixes = prefixes
