@@ -314,7 +314,10 @@ class ApiServerGatewayTest {
         server.enqueue(
             MockResponse().setBody(
                 """{"profiles":[
-                    {"name":"default","api_prefix":"","is_default":true},
+                    {"name":"default","api_prefix":"","is_default":true,
+                     "display_name":"Sol","description":"Manager",
+                     "avatar":{"shape":"hexagon","color":"#8b5cf6"},
+                     "preview":"On it — rendering now","last_active":1755400000.0,"busy":true},
                     {"name":"kimi","api_prefix":"/p/kimi"},
                     {"name":"grok","api_prefix":"/p/grok"}
                  ]}""",
@@ -324,6 +327,16 @@ class ApiServerGatewayTest {
         assertEquals("/v1/profiles", server.takeRequest().path)
         assertEquals(listOf("default", "kimi", "grok"), profiles.map { it.id })
         assertTrue(gw.features.profiles)
+        // Enriched metadata parses; the minimal rows still work beside it.
+        val sol = profiles.first()
+        assertEquals("Sol", sol.displayName)
+        assertEquals("hexagon", sol.avatarShape)
+        assertEquals("#8b5cf6", sol.avatarColor)
+        assertEquals("On it — rendering now", sol.preview)
+        assertEquals(1755400000000L, sol.lastActiveMs)
+        assertEquals(true, sol.busy)
+        assertEquals("kimi", profiles[1].displayName)
+        assertEquals(null, profiles[1].busy)
 
         gw.setActiveProfile("grok")
         server.enqueue(MockResponse().setBody(capabilitiesBody()))

@@ -33,6 +33,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,7 +41,9 @@ import androidx.compose.ui.unit.dp
 import com.alara.hermes.protocol.ConnectionState
 import com.alara.hermes.protocol.HermesProfile
 import com.alara.hermes.ui.HomeViewModel
+import com.alara.hermes.ui.chat.MediaAuth
 import com.alara.hermes.ui.theme.HermesColors
+import com.alara.hermes.util.formatRelativeTime
 
 /**
  * Bot Mode roster: the live profiles from /v1/profiles, one row per bot.
@@ -49,10 +52,11 @@ import com.alara.hermes.ui.theme.HermesColors
  * app only OPERATES the roster (no create/delete/edit of production
  * profiles from mobile).
  *
- * Visual note: desktop Bot Mode reference material (screenshots, plugin
- * source) is not reachable from this workspace; see
- * docs/BOT_MODE_REFERENCE.md. The layout keeps the app's design language
- * until the desktop reference lands.
+ * Design follows the native Bot Mode plugin (see
+ * docs/BOT_MODE_REFERENCE.md): roster rows are avatar + name + latest
+ * preview + timestamp, presence is per-bot (busy flag or activity within
+ * the plugin's 90s window), and the header dot is the OVERALL gateway
+ * connection — the two are deliberately separate signals.
  */
 @Composable
 fun BotsScreen(
@@ -61,6 +65,7 @@ fun BotsScreen(
     onOpenBot: (HermesProfile) -> Unit,
 ) {
     val state by viewModel.state.collectAsState()
+    val mediaAuth by viewModel.mediaAuth.collectAsState()
 
     // The roster re-fetches on open so profiles created on the VPS appear.
     LaunchedEffect(Unit) { viewModel.reloadProfiles() }
@@ -90,6 +95,19 @@ fun BotsScreen(
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                         }
                         Text("Bots", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.width(10.dp))
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .background(
+                                    when (state.connection) {
+                                        is ConnectionState.Connected -> HermesColors.Positive
+                                        ConnectionState.Connecting -> HermesColors.Caution
+                                        else -> HermesColors.Danger
+                                    },
+                                    CircleShape,
+                                ),
+                        )
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
@@ -115,7 +133,7 @@ fun BotsScreen(
                         BotRow(
                             profile = profile,
                             selected = profile.id == state.activeProfile,
-                            online = state.connection is ConnectionState.Connected,
+                            mediaAuth = mediaAuth,
                             onClick = { onOpenBot(profile) },
                         )
                     }
@@ -129,10 +147,9 @@ fun BotsScreen(
  * Avatar identity mirrors the native Bot Mode plugin
  * (NousResearch/Hermes-Bot-Mode): a flat geometric body with two eyes.
  * Shape comes from the same 31-multiplier name hash over the same shape
- * list, and the default body colour is the plugin's default orange, so an
- * uncustomized bot looks the same here as on desktop. (Custom colours,
- * uploaded images and pets live in desktop plugin storage the mobile app
- * cannot read — those bots fall back to their default look here.)
+ * list, and the default body colour is the plugin's default orange. The
+ * installed ALARA plugin syncs custom avatars through the backend; when
+ * /v1/profiles advertises avatar metadata it wins over this default.
  */
 private val AVATAR_SHAPES = listOf("circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop")
 private val AVATAR_BODY = Color(0xFFF97316)
@@ -144,20 +161,80 @@ private fun defaultShapeFor(name: String): String {
     return AVATAR_SHAPES[(hash % AVATAR_SHAPES.size.toUInt()).toInt()]
 }
 
+/**
+ * Avatar precedence: server-synced image (ALARA plugin backend sync) →
+ * server-synced shape/colour → upstream geometric default. Auth headers ride
+ * only to the gateway host, mirroring MediaGallery's rule.
+ */
 @Composable
-private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
-    val shape = defaultShapeFor(name)
+private fun BotAvatar(
+    profile: HermesProfile,
+    sizeDp: androidx.compose.ui.unit.Dp,
+    mediaAuth: com.alara.hermes.ui.chat.MediaAuth?,
+) {
+    val url = profile.avatarUrl
+    if (!url.isNullOrBlank()) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val request = androidx.compose.runtime.remember(url) {
+            coil.request.ImageRequest.Builder(context)
+                .data(url)
+                .apply {
+                    val host = runCatching { java.net.URI(url).host }.getOrNull()
+                    if (mediaAuth != null && host != null &&
+                        host.equals(mediaAuth.host, ignoreCase = true)
+                    ) {
+                        setHeader("Authorization", mediaAuth.header)
+                    }
+                }
+                .crossfade(true)
+                .build()
+        }
+        coil.compose.AsyncImage(
+            model = request,
+            contentDescription = null,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .size(sizeDp)
+                .clip(CircleShape),
+        )
+        return
+    }
+    GeometricAvatar(
+        name = profile.id,
+        shapeOverride = profile.avatarShape,
+        colorOverride = profile.avatarColor,
+        sizeDp = sizeDp,
+    )
+}
+
+@Composable
+private fun GeometricAvatar(
+    name: String,
+    shapeOverride: String?,
+    colorOverride: String?,
+    sizeDp: androidx.compose.ui.unit.Dp,
+) {
+    val shape = shapeOverride?.takeIf { it in AVATAR_SHAPES } ?: defaultShapeFor(name)
+    val body = colorOverride?.let { hex ->
+        runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
+    } ?: AVATAR_BODY
     androidx.compose.foundation.Canvas(Modifier.size(sizeDp)) {
+        // Perceptual luminance: eyes flip light on dark bodies (upstream rule).
+        val eyeColor = if (0.2126f * body.red + 0.7152f * body.green + 0.0722f * body.blue < 0.43f) {
+            Color(0xFFF5F5F4)
+        } else {
+            AVATAR_INK
+        }
         val w = size.width
         val h = size.height
         when (shape) {
-            "circle" -> drawCircle(AVATAR_BODY, radius = w / 2)
+            "circle" -> drawCircle(body, radius = w / 2)
             "squircle" -> drawRoundRect(
-                AVATAR_BODY,
+                body,
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.3f),
             )
             "pill" -> drawRoundRect(
-                AVATAR_BODY,
+                body,
                 topLeft = androidx.compose.ui.geometry.Offset(0f, h * 0.1f),
                 size = androidx.compose.ui.geometry.Size(w, h * 0.8f),
                 cornerRadius = androidx.compose.ui.geometry.CornerRadius(h * 0.4f),
@@ -166,7 +243,7 @@ private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
                 androidx.compose.ui.graphics.Path().apply {
                     moveTo(w / 2, 0f); lineTo(w, h); lineTo(0f, h); close()
                 },
-                AVATAR_BODY,
+                body,
             )
             "hexagon" -> drawPath(
                 androidx.compose.ui.graphics.Path().apply {
@@ -174,27 +251,27 @@ private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
                     lineTo(w * 0.93f, h * 0.75f); lineTo(w * 0.5f, h)
                     lineTo(w * 0.07f, h * 0.75f); lineTo(w * 0.07f, h * 0.25f); close()
                 },
-                AVATAR_BODY,
+                body,
             )
             "cloud" -> {
-                drawCircle(AVATAR_BODY, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.3f, h * 0.62f))
-                drawCircle(AVATAR_BODY, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.7f, h * 0.62f))
-                drawCircle(AVATAR_BODY, radius = w * 0.32f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.42f))
+                drawCircle(body, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.3f, h * 0.62f))
+                drawCircle(body, radius = w * 0.26f, center = androidx.compose.ui.geometry.Offset(w * 0.7f, h * 0.62f))
+                drawCircle(body, radius = w * 0.32f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.42f))
                 drawRoundRect(
-                    AVATAR_BODY,
+                    body,
                     topLeft = androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.5f),
                     size = androidx.compose.ui.geometry.Size(w * 0.64f, h * 0.38f),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(w * 0.19f),
                 )
             }
             "drop" -> {
-                drawCircle(AVATAR_BODY, radius = w * 0.38f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.6f))
+                drawCircle(body, radius = w * 0.38f, center = androidx.compose.ui.geometry.Offset(w * 0.5f, h * 0.6f))
                 drawPath(
                     androidx.compose.ui.graphics.Path().apply {
                         moveTo(w * 0.5f, 0f); lineTo(w * 0.79f, h * 0.5f)
                         lineTo(w * 0.21f, h * 0.5f); close()
                     },
-                    AVATAR_BODY,
+                    body,
                 )
             }
         }
@@ -207,8 +284,8 @@ private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
             else -> h * 0.5f
         }
         val eyeR = w * 0.065f
-        drawCircle(AVATAR_INK, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.38f, eyeY))
-        drawCircle(AVATAR_INK, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.62f, eyeY))
+        drawCircle(eyeColor, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.38f, eyeY))
+        drawCircle(eyeColor, radius = eyeR, center = androidx.compose.ui.geometry.Offset(w * 0.62f, eyeY))
     }
 }
 
@@ -216,9 +293,18 @@ private fun BotAvatar(name: String, sizeDp: androidx.compose.ui.unit.Dp) {
 private fun BotRow(
     profile: HermesProfile,
     selected: Boolean,
-    online: Boolean,
+    mediaAuth: MediaAuth?,
     onClick: () -> Unit,
 ) {
+    // Per-bot presence, native-plugin semantics: busy now, or wrote within
+    // the last 90 seconds. Null when the server sent no summary fields —
+    // then no dot is shown rather than a misleading one.
+    val presence: Boolean? = when {
+        profile.busy == true -> true
+        profile.lastActiveMs != null ->
+            System.currentTimeMillis() - profile.lastActiveMs!! < 90_000L
+        else -> null
+    }
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
@@ -231,18 +317,20 @@ private fun BotRow(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Box {
-            BotAvatar(profile.id, 44.dp)
-            Box(
-                Modifier
-                    .align(Alignment.BottomEnd)
-                    .size(12.dp)
-                    .background(MaterialTheme.colorScheme.background, CircleShape)
-                    .padding(2.dp)
-                    .background(
-                        if (online) HermesColors.Positive else MaterialTheme.colorScheme.outlineVariant,
-                        CircleShape,
-                    ),
-            )
+            BotAvatar(profile, 44.dp, mediaAuth)
+            if (presence != null) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomEnd)
+                        .size(12.dp)
+                        .background(MaterialTheme.colorScheme.background, CircleShape)
+                        .padding(2.dp)
+                        .background(
+                            if (presence) HermesColors.Positive else MaterialTheme.colorScheme.outlineVariant,
+                            CircleShape,
+                        ),
+                )
+            }
         }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
@@ -263,7 +351,10 @@ private fun BotRow(
                     )
                 }
             }
-            val subtitle = profile.description ?: profile.model
+            // Latest Bot Chat preview when the server provides roster
+            // summaries; role/model otherwise.
+            val subtitle = profile.preview?.takeIf { it.isNotBlank() }
+                ?: profile.description ?: profile.model
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     subtitle,
@@ -274,13 +365,22 @@ private fun BotRow(
                 )
             }
         }
-        if (selected) {
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "active",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            profile.lastActiveMs?.let {
+                Text(
+                    formatRelativeTime(it),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (selected) {
+                Text(
+                    "active",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
     HorizontalDivider(

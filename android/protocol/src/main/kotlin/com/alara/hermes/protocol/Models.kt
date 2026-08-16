@@ -12,6 +12,14 @@ data class HermesProfile(
     val model: String? = null,
     /** Role/description line for rosters (Bot Mode). */
     val description: String? = null,
+    /** Server-synced avatar metadata (ALARA plugin); null → geometric default. */
+    val avatarShape: String? = null,
+    val avatarColor: String? = null,
+    val avatarUrl: String? = null,
+    /** Optional roster summary so clients need not fan out per-profile queries. */
+    val preview: String? = null,
+    val lastActiveMs: Long? = null,
+    val busy: Boolean? = null,
 )
 
 /** Where a session's turns have historically originated. */

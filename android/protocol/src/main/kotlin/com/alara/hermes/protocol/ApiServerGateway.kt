@@ -294,12 +294,27 @@ class ApiServerGateway(
             val name = (str("name") ?: str("id"))?.trim()?.takeIf { it.isNotEmpty() }
                 ?: return@mapNotNull null
             str("api_prefix")?.let { prefixes[name] = it.trim('/') }
+            // ALARA builds enrich rows with display/avatar/summary metadata;
+            // every field is optional so the minimal {name, api_prefix}
+            // response keeps working.
+            val avatar = obj["avatar"] as? JsonObject
+            fun astr(key: String) = (avatar?.get(key) as? JsonPrimitive)?.contentOrNull
+            fun num(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull?.toDoubleOrNull()
             HermesProfile(
                 id = name,
                 displayName = str("display_name")?.takeIf { it.isNotBlank() } ?: name,
                 isDefault = str("is_default")?.toBooleanStrictOrNull() ?: (name == "default"),
                 model = str("model"),
-                description = str("description") ?: str("role"),
+                description = str("description") ?: str("role") ?: str("title"),
+                avatarShape = astr("shape") ?: str("avatar_shape"),
+                avatarColor = astr("color") ?: str("avatar_color"),
+                avatarUrl = astr("image_url") ?: astr("image") ?: astr("url") ?: str("avatar_url"),
+                preview = str("preview") ?: str("last_message_preview") ?: str("last_message"),
+                lastActiveMs = (num("last_active") ?: num("last_activity"))
+                    ?.let { (it * 1000).toLong() },
+                busy = str("busy")?.toBooleanStrictOrNull()
+                    ?: str("running")?.toBooleanStrictOrNull()
+                    ?: str("active")?.toBooleanStrictOrNull(),
             )
         }
         if (profiles.isNotEmpty()) profilePrefixes = prefixes
