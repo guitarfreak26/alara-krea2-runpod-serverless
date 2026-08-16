@@ -26,11 +26,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,7 +44,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.alara.hermes.protocol.ConnectionState
+import com.alara.hermes.protocol.BotRoom
 import com.alara.hermes.protocol.HermesProfile
+import com.alara.hermes.ui.HomeUiState
 import com.alara.hermes.ui.HomeViewModel
 import com.alara.hermes.ui.chat.MediaAuth
 import com.alara.hermes.ui.theme.HermesColors
@@ -63,12 +70,16 @@ fun BotsScreen(
     viewModel: HomeViewModel,
     onBack: () -> Unit,
     onOpenBot: (HermesProfile) -> Unit,
+    onOpenRoom: (BotRoom) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsState()
     val mediaAuth by viewModel.mediaAuth.collectAsState()
 
     // The roster re-fetches on open so profiles created on the VPS appear.
-    LaunchedEffect(Unit) { viewModel.reloadProfiles() }
+    LaunchedEffect(Unit) {
+        viewModel.reloadProfiles()
+        viewModel.loadRooms()
+    }
 
     BackHandler(onBack = onBack)
     Surface(
@@ -113,7 +124,18 @@ fun BotsScreen(
                 }
             }
 
-            when {
+            // Two views: server-backed Rooms, and the individual bots.
+            var tab by rememberSaveable { mutableStateOf(1) }
+            TabRow(
+                selectedTabIndex = tab,
+                containerColor = MaterialTheme.colorScheme.background,
+            ) {
+                Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Rooms") })
+                Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Bots") })
+            }
+            if (tab == 0) {
+                RoomsTab(state, mediaAuth, onOpenRoom)
+            } else when {
                 state.profiles.isEmpty() && state.sessionsLoading -> Box(
                     Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
@@ -141,6 +163,120 @@ fun BotsScreen(
             }
         }
     }
+}
+
+/**
+ * Server-backed rooms (docs/BOT_ROOMS_API.md). Nothing here is faked: when
+ * the capability is absent a quiet unsupported note shows instead of broken
+ * controls, and the room list renders whatever the server defines.
+ */
+@Composable
+private fun RoomsTab(
+    state: HomeUiState,
+    mediaAuth: MediaAuth?,
+    onOpenRoom: (BotRoom) -> Unit,
+) {
+    when {
+        !state.features.botRooms -> CenteredNote(
+            "Rooms require a newer ALARA server.\nIndividual bots keep working meanwhile.",
+        )
+        state.rooms.isEmpty() -> CenteredNote("No rooms configured on the server")
+        else -> LazyColumn(Modifier.fillMaxSize()) {
+            items(state.rooms, key = { it.id }) { room ->
+                RoomRow(room, mediaAuth) { onOpenRoom(room) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CenteredNote(text: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun RoomRow(room: BotRoom, mediaAuth: MediaAuth?, onClick: () -> Unit) {
+    val manager = room.members.firstOrNull { it.profileId == room.managerProfileId }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        BotAvatar(
+            HermesProfile(
+                id = room.managerProfileId,
+                displayName = manager?.displayName ?: room.displayName,
+                avatarShape = manager?.avatarShape,
+                avatarColor = manager?.avatarColor,
+                avatarUrl = manager?.avatarUrl,
+            ),
+            44.dp,
+            mediaAuth,
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    room.displayName,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (room.unread == true) {
+                    Spacer(Modifier.width(6.dp))
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                    )
+                }
+            }
+            Text(
+                room.members.joinToString("  ·  ") { it.displayName },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            room.preview?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(horizontalAlignment = Alignment.End) {
+            if (room.busy == true) {
+                com.alara.hermes.ui.home.RunningIndicator()
+            } else {
+                room.lastActiveMs?.let {
+                    Text(
+                        formatRelativeTime(it),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f),
+        modifier = Modifier.padding(start = 74.dp),
+    )
 }
 
 /*

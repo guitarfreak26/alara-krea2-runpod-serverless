@@ -134,10 +134,10 @@ fun HomeScreen(
     LaunchedEffect(openSessionRequests) {
         openSessionRequests?.collect { key ->
             if (key != null) {
-                if (key == com.alara.hermes.ui.HomeViewModel.NEW_BOT_CHAT) {
-                    viewModel.openNewBotChat()
-                } else {
-                    viewModel.openSession(key)
+                when (key) {
+                    com.alara.hermes.ui.HomeViewModel.NEW_BOT_CHAT -> viewModel.openNewBotChat()
+                    com.alara.hermes.ui.HomeViewModel.ROOM_OPENED -> Unit // already open; just navigate
+                    else -> viewModel.openSession(key)
                 }
                 navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
                 openSessionRequests.value = null

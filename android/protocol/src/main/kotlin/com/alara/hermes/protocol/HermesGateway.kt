@@ -20,6 +20,19 @@ interface SessionHandle {
      * the user retry.
      */
     suspend fun send(text: String, attachments: List<OutgoingAttachment> = emptyList())
+
+    /**
+     * Room send with structured mention metadata (profile ids of CURRENT
+     * room members only) and an idempotency id — see docs/BOT_ROOMS_API.md.
+     * [clientMessageId] defaults to a fresh UUID; pass the previous value
+     * only when retrying the same logical submission. Non-room handles fall
+     * back to a plain [send].
+     */
+    suspend fun sendWithMentions(
+        text: String,
+        mentions: List<String>,
+        clientMessageId: String? = null,
+    ) = send(text)
     suspend fun interrupt()
 
     /**
@@ -104,6 +117,18 @@ interface HermesGateway {
      * this URL never embeds credentials.
      */
     fun mediaUrl(path: String): String? = null
+
+    /**
+     * Server-defined Bot Mode rooms. Only valid when
+     * [GatewayFeatures.botRooms]; throws otherwise — the client must show a
+     * quiet unsupported state, never fake rooms.
+     */
+    suspend fun listBotRooms(): List<BotRoom> =
+        throw com.alara.hermes.protocol.wire.HermesRpcException("Rooms require a newer ALARA server")
+
+    /** Open a room's persistent transcript bound to the room send contract. */
+    suspend fun openRoom(room: BotRoom): SessionHandle =
+        throw com.alara.hermes.protocol.wire.HermesRpcException("Rooms require a newer ALARA server")
 
     /** Installed skills, read-only. */
     suspend fun listSkills(): List<SkillInfo>

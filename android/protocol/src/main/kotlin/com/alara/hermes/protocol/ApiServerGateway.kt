@@ -109,6 +109,8 @@ class ApiServerGateway(
         val archivedListing: Boolean = false,
         /** GET /v1/usage serves provider allowance windows. */
         val accountUsage: Boolean? = null,
+        /** Server-backed Bot Mode rooms (docs/BOT_ROOMS_API.md). */
+        val botModeRooms: Boolean = false,
         val skillsApi: Boolean? = null,
         val jobsAvailable: Boolean? = null,
         val model: String? = null,
@@ -129,6 +131,7 @@ class ApiServerGateway(
             // Thinking/fast ride each request as model_options overrides.
             sessionConfig = true,
             archivedListing = capabilities?.archivedListing == true,
+            botRooms = capabilities?.botModeRooms == true,
             skills = capabilities?.skillsApi != false,
             automations = capabilities?.jobsAvailable != false,
         )
@@ -241,6 +244,8 @@ class ApiServerGateway(
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
             accountUsage = (features?.get("account_usage") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
+            botModeRooms = (features?.get("bot_mode_rooms") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull() == true,
             skillsApi = (features?.get("skills_api") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
             // jobs_admin=false means CRUD is locked down; listing may still work,
@@ -391,6 +396,76 @@ class ApiServerGateway(
                 model = session.model,
             )
         }.sortedByDescending { it.updatedAtMs }
+    }
+
+    override suspend fun listBotRooms(): List<BotRoom> {
+        if (capabilities == null) connect()
+        if (capabilities?.botModeRooms != true) {
+            throw HermesRpcException("Rooms require a newer ALARA server")
+        }
+        val payload = getJson(url("v1/bot-mode/rooms"))
+        val rows = when (payload) {
+            is JsonArray -> payload
+            is JsonObject -> (payload["rooms"] ?: payload["data"]) as? JsonArray
+                ?: throw HermesRpcException("malformed rooms response")
+            else -> throw HermesRpcException("malformed rooms response")
+        }
+        return rows.mapNotNull { row ->
+            val obj = row as? JsonObject ?: return@mapNotNull null
+            fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            val id = str("id") ?: return@mapNotNull null
+            val sessionKey = str("session_id") ?: return@mapNotNull null
+            val members = (obj["members"] as? JsonArray).orEmpty().mapNotNull { m ->
+                val mo = m as? JsonObject ?: return@mapNotNull null
+                fun mstr(key: String) = (mo[key] as? JsonPrimitive)?.contentOrNull
+                val avatar = mo["avatar"] as? JsonObject
+                fun astr(key: String) = (avatar?.get(key) as? JsonPrimitive)?.contentOrNull
+                val profile = mstr("profile") ?: mstr("profile_id") ?: return@mapNotNull null
+                RoomMember(
+                    profileId = profile,
+                    displayName = mstr("display_name")?.takeIf { it.isNotBlank() } ?: profile,
+                    role = mstr("role") ?: "specialist",
+                    avatarShape = astr("shape"),
+                    avatarColor = astr("color"),
+                    avatarUrl = astr("image_url"),
+                )
+            }
+            val manager = str("manager")
+                ?: members.firstOrNull { it.role == "manager" }?.profileId
+                ?: return@mapNotNull null
+            BotRoom(
+                id = id,
+                displayName = str("display_name")?.takeIf { it.isNotBlank() } ?: id,
+                description = str("description"),
+                managerProfileId = manager,
+                apiPrefix = str("api_prefix"),
+                members = members,
+                sessionKey = sessionKey,
+                preview = str("preview"),
+                lastActiveMs = (obj["last_active"] as? JsonPrimitive)?.contentOrNull
+                    ?.toDoubleOrNull()?.let { (it * 1000).toLong() },
+                busy = str("busy")?.toBooleanStrictOrNull(),
+                unread = str("unread")?.toBooleanStrictOrNull(),
+            )
+        }
+    }
+
+    override suspend fun openRoom(room: BotRoom): SessionHandle {
+        if (capabilities == null) connect()
+        if (capabilities?.botModeRooms != true) {
+            throw HermesRpcException("Rooms require a newer ALARA server")
+        }
+        // The room's advertised api_prefix is authoritative — register it for
+        // the manager profile BEFORE scoping so url() never falls back to the
+        // guessed /p/{name} mirror.
+        room.apiPrefix?.let { prefix ->
+            profilePrefixes = profilePrefixes + (room.managerProfileId to prefix.trim('/'))
+        }
+        setActiveProfile(room.managerProfileId)
+        val handle = handles.getOrPut(room.sessionKey) {
+            ApiSessionHandle(room.sessionKey, roomId = room.id)
+        }
+        return handle
     }
 
     override suspend fun forkSession(sessionKey: String): String {
@@ -727,10 +802,15 @@ class ApiServerGateway(
     inner class ApiSessionHandle(
         override val sessionKey: String,
         private val isNew: Boolean = false,
+        /** Non-null for Bot Mode rooms: sends route through the room contract. */
+        private val roomId: String? = null,
     ) : SessionHandle {
 
         /** True once the authoritative transcript has loaded at least once. */
         @Volatile private var historyLoaded = isNew
+
+        /** Highest `seq` seen on the current run stream (reconnect dedupe). */
+        @Volatile private var lastEventSeq = -1L
         override val profileId: String = "default"
 
         private val _timeline = MutableStateFlow(TimelineState(sessionKey))
@@ -779,6 +859,12 @@ class ApiServerGateway(
                 .map { (if (it.role == Role.USER) "user" else "assistant") to it.text }
 
         override suspend fun send(text: String, attachments: List<OutgoingAttachment>) {
+            // Room handles ALWAYS speak the room contract; an unmentioned
+            // message goes to the room manager server-side.
+            if (roomId != null) {
+                sendWithMentions(text, emptyList())
+                return
+            }
             if (streamJob?.isActive == true) {
                 throw HermesRpcException("a turn is already streaming; stop it first")
             }
@@ -820,6 +906,78 @@ class ApiServerGateway(
             } else {
                 sendViaCompletions(text, attachments)
             }
+        }
+
+        /**
+         * Room send (docs/BOT_ROOMS_API.md): POST the structured payload —
+         * text, member-only mentions, idempotency id — then stream the
+         * returned run through the shared runs event engine. Duplicate
+         * client_message_id values are the server's cue to return the
+         * original run instead of dispatching new work.
+         */
+        override suspend fun sendWithMentions(
+            text: String,
+            mentions: List<String>,
+            clientMessageId: String?,
+        ) {
+            val room = roomId ?: run {
+                send(text)
+                return
+            }
+            if (streamJob?.isActive == true) {
+                throw HermesRpcException("a turn is already streaming; stop it first")
+            }
+            if (capabilities == null) connect()
+            if (!historyLoaded) refresh()
+            val messageId = clientMessageId?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+            val body = buildJsonObject {
+                put("text", text)
+                putJsonArray("mentions") { mentions.forEach { add(JsonPrimitive(it)) } }
+                put("client_message_id", messageId)
+            }
+            interrupted = false
+            _timeline.update { state ->
+                state.copy(
+                    running = true,
+                    entries = state.entries + ChatEntry.Message(
+                        id = EntryId("local-user:$sessionKey:$messageId"),
+                        timestampMs = System.currentTimeMillis(),
+                        role = Role.USER,
+                        text = text,
+                    ),
+                )
+            }
+            val started = withContext(Dispatchers.IO) {
+                restClient.newCall(
+                    request(url("v1/bot-mode/rooms", room, "messages"))
+                        .post(body.toString().toRequestBody(jsonMedia)).build(),
+                ).execute().use { response ->
+                    val payload = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) {
+                        // 422 invalid_mention / 409 room_busy arrive as clean
+                        // errors; the turn never dispatches an agent.
+                        val message = runCatching {
+                            (((json.parseToJsonElement(payload) as? JsonObject)
+                                ?.get("error") as? JsonObject)
+                                ?.get("message") as? JsonPrimitive)?.contentOrNull
+                        }.getOrNull()
+                        finishTurn(error = null)
+                        throw HermesHttpException(
+                            response.code,
+                            message ?: "room message failed: HTTP ${response.code}",
+                        )
+                    }
+                    json.parseToJsonElement(payload) as? JsonObject
+                        ?: throw HermesRpcException("malformed room message response")
+                }
+            }
+            val runId = (started["run_id"] as? JsonPrimitive)?.contentOrNull
+                ?: throw HermesRpcException("room message response carried no run_id")
+            activeRunId = runId
+            lastEventSeq = -1L
+            _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId))
+            reduce(WireEvent(type = "message.start", sessionId = sessionKey))
+            attachRunEventStream(runId)
         }
 
         // ---- session-bound streaming turn (/api/sessions/{id}/chat/stream) --
@@ -1024,11 +1182,27 @@ class ApiServerGateway(
                 ?: throw HermesRpcException("run response carried no run_id")
             activeRunId = runId
             interrupted = false
+            lastEventSeq = -1L
             _turnEvents.tryEmit(TurnEvent.Started(sessionKey, runId))
             reduce(WireEvent(type = "message.start", sessionId = sessionKey))
+            attachRunEventStream(runId)
+        }
 
+        /**
+         * Attach (or re-attach after network loss/backgrounding) to a run's
+         * SSE stream. Shared by run and room turns; frames carrying `seq`
+         * numbers are deduplicated so reconnects never repeat rendered events.
+         */
+        private fun attachRunEventStream(runId: String) {
+            val target = url("v1/runs", runId, "events").let { base ->
+                if (lastEventSeq >= 0) {
+                    base.newBuilder().addQueryParameter("cursor", lastEventSeq.toString()).build()
+                } else {
+                    base
+                }
+            }
             val call = client.newCall(
-                request(url("v1/runs", runId, "events"))
+                request(target)
                     .header("Accept", "text/event-stream")
                     .get().build(),
             )
@@ -1077,7 +1251,76 @@ class ApiServerGateway(
             val obj = runCatching { json.parseToJsonElement(data) }.getOrNull() as? JsonObject ?: return
             val kind = (obj["event"] as? JsonPrimitive)?.contentOrNull ?: return
             fun str(key: String) = (obj[key] as? JsonPrimitive)?.contentOrNull
+            // Sequenced frames (rooms contract): drop anything already rendered
+            // before a reconnect; unsequenced frames pass through unchanged.
+            (obj["seq"] as? JsonPrimitive)?.contentOrNull?.toLongOrNull()?.let { seq ->
+                if (seq <= lastEventSeq) return
+                lastEventSeq = seq
+            }
             when (kind) {
+                // ---- Bot Mode room events (docs/BOT_ROOMS_API.md) ----------
+                // Only the manager speaks frontstage: manager text rides the
+                // shared message.delta/complete path. Specialists surface as
+                // collapsed activity rows — never transcript messages.
+                "user.message", "manager.started", "run.steered" -> Unit
+                "specialist.started" -> reduce(
+                    WireEvent("tool.start", sessionKey, payload = buildJsonObject {
+                        put("tool_id", str("specialist") ?: "specialist")
+                        put("name", str("display_name") ?: str("specialist") ?: "specialist")
+                        str("task")?.let { put("context", it.take(140)) }
+                    }),
+                )
+                "specialist.progress" -> reduce(
+                    WireEvent("tool.progress", sessionKey, payload = buildJsonObject {
+                        put("tool_id", str("specialist") ?: "specialist")
+                        put("name", str("display_name") ?: str("specialist") ?: "specialist")
+                        str("status")?.let { put("summary", it.take(140)) }
+                    }),
+                )
+                "specialist.completed" -> reduce(
+                    WireEvent("tool.complete", sessionKey, payload = buildJsonObject {
+                        put("tool_id", str("specialist") ?: "specialist")
+                        put("name", str("display_name") ?: str("specialist") ?: "specialist")
+                        str("summary")?.let { put("summary", it.take(140)) }
+                        if (str("status") == "failed") put("failed", true)
+                    }),
+                )
+                "media.available" -> (str("path")?.let { "MEDIA:$it" } ?: str("url"))?.let { link ->
+                    // Ride the manager message so the existing MEDIA pipeline
+                    // renders the player on completion.
+                    reduce(WireEvent("message.delta", sessionKey, payload = buildJsonObject {
+                        put("text", "\n$link\n")
+                    }))
+                }
+                "manager.completed" -> {
+                    // Output APPENDS to whatever streamed (media.available lines
+                    // included) — per contract it carries only not-yet-streamed
+                    // text, so nothing rendered is ever replaced.
+                    str("output")?.takeIf { it.isNotBlank() }?.let { output ->
+                        reduce(WireEvent("message.delta", sessionKey, payload = buildJsonObject {
+                            put("text", output)
+                        }))
+                    }
+                    reduce(WireEvent("message.complete", sessionKey, payload = buildJsonObject {
+                        put("status", "complete")
+                    }))
+                    _turnEvents.tryEmit(TurnEvent.Completed(sessionKey, str("output").orEmpty().take(160)))
+                    afterTurn()
+                }
+                "approval.required" -> {
+                    val prompt = str("description") ?: str("plan") ?: "Approve action?"
+                    reduce(
+                        WireEvent("approval.request", sessionKey, payload = buildJsonObject {
+                            put("command", prompt)
+                            obj["choices"]?.let { put("choices", it) }
+                        }),
+                    )
+                    _turnEvents.tryEmit(TurnEvent.ApprovalRequested(sessionKey, prompt))
+                }
+                "run.stopped" -> {
+                    reduce(WireEvent("turn.end", sessionKey))
+                    afterTurn()
+                }
                 "message.delta" -> str("delta")?.let { delta ->
                     reduce(WireEvent("message.delta", sessionKey, payload = buildJsonObject { put("text", delta) }))
                 }

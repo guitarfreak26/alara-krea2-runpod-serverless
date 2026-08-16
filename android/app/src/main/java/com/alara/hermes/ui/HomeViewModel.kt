@@ -34,6 +34,8 @@ data class ChatUiState(
     val error: String? = null,
     /** True when an existing conversation's history failed to load; sends are blocked. */
     val loadFailed: Boolean = false,
+    /** Non-null while the open conversation is a server-backed Bot Mode room. */
+    val room: com.alara.hermes.protocol.BotRoom? = null,
 )
 
 data class HomeUiState(
@@ -53,6 +55,8 @@ data class HomeUiState(
         com.alara.hermes.data.ChatSettings(activeFirst = false, showToolActivity = true),
     /** Source groups (cron, matrix, discord, …) the user filtered out of the list. */
     val hiddenSources: Set<String> = emptySet(),
+    /** Server-defined Bot Mode rooms; empty when unsupported or none exist. */
+    val rooms: List<com.alara.hermes.protocol.BotRoom> = emptyList(),
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -390,6 +394,64 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         _state.update { it.copy(chat = it.chat.copy(title = BOT_CHAT_TITLE)) }
     }
 
+    /** Refresh the server room roster; quiet no-op when unsupported. */
+    fun loadRooms() {
+        val gw = gateway ?: return
+        if (!gw.features.botRooms) {
+            _state.update { it.copy(rooms = emptyList()) }
+            return
+        }
+        viewModelScope.launch {
+            runCatching { gw.listBotRooms() }
+                .onSuccess { rooms -> _state.update { it.copy(rooms = rooms) } }
+                .onFailure { t -> _state.update { it.copy(notice = clean(t.message)) } }
+        }
+    }
+
+    /**
+     * Open a server-backed room: one persistent transcript, sends carry
+     * structured mentions, the room's manager profile scopes every request.
+     */
+    fun openRoom(room: com.alara.hermes.protocol.BotRoom) {
+        val gw = gateway ?: return
+        closeChat()
+        _state.update {
+            it.copy(
+                activeProfile = room.managerProfileId,
+                chat = ChatUiState(sessionKey = room.sessionKey, title = room.displayName, room = room),
+            )
+        }
+        viewModelScope.launch {
+            container.settings.setActiveProfile(room.managerProfileId)
+            val opened = runCatching { gw.openRoom(room) }
+            opened.onSuccess { h ->
+                handle = h
+                // Rooms are not resumed through lastOpenSession (that path
+                // reopens plain sessions without the room contract).
+                container.settings.setLastOpenSession(null)
+                runCatching { h.refresh() }.onFailure { t ->
+                    _state.update {
+                        it.copy(
+                            chat = it.chat.copy(
+                                loadFailed = true,
+                                error = clean("Couldn't load this room from the server: ${t.message}"),
+                            ),
+                        )
+                    }
+                }
+                handleJobs += viewModelScope.launch {
+                    h.timeline.collect { t -> _state.update { it.copy(chat = it.chat.copy(timeline = t)) } }
+                }
+                handleJobs += viewModelScope.launch {
+                    h.config.collect { c -> _state.update { it.copy(chat = it.chat.copy(config = c)) } }
+                }
+                container.pendingOpenSession.value = ROOM_OPENED
+            }.onFailure { t ->
+                _state.update { it.copy(chat = it.chat.copy(error = clean(t.message))) }
+            }
+        }
+    }
+
     /** Retry loading a conversation whose history fetch failed. */
     fun retryLoad() {
         val h = handle ?: return
@@ -434,9 +496,19 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 it is com.alara.hermes.protocol.ChatEntry.Message &&
                     it.role == com.alara.hermes.protocol.Role.USER
             }
+        // Room sends carry structured mentions: only CURRENT room members
+        // whose @DisplayName or @id appears in the text — an unknown mention
+        // never reaches the server as metadata.
+        val room = _state.value.chat.room
+        val mentions = room?.members.orEmpty().filter { member ->
+            text.contains("@${member.displayName}", ignoreCase = true) ||
+                text.contains("@${member.profileId}", ignoreCase = true)
+        }.map { it.profileId }
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }
         viewModelScope.launch {
-            runCatching { h.send(text, attachments) }
+            runCatching {
+                if (room != null) h.sendWithMentions(text, mentions) else h.send(text, attachments)
+            }
                 .onSuccess {
                     // The server never titles sessions minted from this surface;
                     // name it from the first message like desktop's auto-title.
@@ -617,6 +689,9 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
         /** Sentinel routed through pendingOpenSession for a fresh Bot Chat. */
         const val NEW_BOT_CHAT = "::new-bot-chat::"
+
+        /** Sentinel: a room was already opened; the UI only needs to navigate. */
+        const val ROOM_OPENED = "::room-opened::"
 
         fun factory(container: AppContainer) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

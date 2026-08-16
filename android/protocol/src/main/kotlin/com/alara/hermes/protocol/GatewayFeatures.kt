@@ -21,6 +21,8 @@ data class GatewayFeatures(
     val skills: Boolean = false,
     /** Cron automations available. */
     val automations: Boolean = false,
+    /** Server-backed Bot Mode rooms (features.bot_mode_rooms). */
+    val botRooms: Boolean = false,
 ) {
     companion object {
         /** Full dashboard gateway (`/api/ws` + REST, default port 9119). */

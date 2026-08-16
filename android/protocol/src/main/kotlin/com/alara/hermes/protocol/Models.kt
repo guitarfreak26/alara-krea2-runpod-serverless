@@ -22,6 +22,37 @@ data class HermesProfile(
     val busy: Boolean? = null,
 )
 
+/** One member of a server-defined Bot Mode room. */
+data class RoomMember(
+    val profileId: String,
+    val displayName: String = profileId,
+    /** "manager" | "specialist" | future roles; server-controlled. */
+    val role: String = "specialist",
+    val avatarShape: String? = null,
+    val avatarColor: String? = null,
+    val avatarUrl: String? = null,
+)
+
+/**
+ * A server-backed Bot Mode room (see docs/BOT_ROOMS_API.md). Existence,
+ * membership, roles and permissions are entirely server-controlled; the
+ * client renders and operates, never administers.
+ */
+data class BotRoom(
+    val id: String,
+    val displayName: String,
+    val description: String? = null,
+    val managerProfileId: String,
+    val apiPrefix: String? = null,
+    val members: List<RoomMember> = emptyList(),
+    /** Persistent room transcript session id. */
+    val sessionKey: String,
+    val preview: String? = null,
+    val lastActiveMs: Long? = null,
+    val busy: Boolean? = null,
+    val unread: Boolean? = null,
+)
+
 /** Where a session's turns have historically originated. */
 enum class SessionSource { DESKTOP, ANDROID, DISCORD, MATRIX, CLI, OTHER }
 

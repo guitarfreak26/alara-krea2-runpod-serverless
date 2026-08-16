@@ -187,6 +187,10 @@ private fun MainFlow(container: AppContainer) {
                 viewModel.openBotChat(profile.id)
                 overlay = null
             },
+            onOpenRoom = { room ->
+                viewModel.openRoom(room)
+                overlay = null
+            },
         )
         "skills" -> com.alara.hermes.ui.manage.SkillsScreen(viewModel, onBack = { overlay = null })
         "automations" -> com.alara.hermes.ui.manage.AutomationsScreen(viewModel, onBack = { overlay = null })

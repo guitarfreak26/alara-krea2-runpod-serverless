@@ -66,14 +66,17 @@ upstream; this doc keeps the four layers separate.
 
 ## 4. Pending mobile behaviour (honest gaps)
 
-- **Creator rooms — NOT implemented.** Planned shape: a room such as
-  "Seoyeon Team" with Sol Seoyeon as the only frontstage manager, Alex as
-  a quiet production specialist, optional reviewers later. Requirements
-  when built: one manager response, one working indication, specialist
-  work collapsed backstage, no recursive agent conversations, and no
-  faked shared room unless the backend exposes a real room contract.
-  `BotsScreen` + `openBotChat(profileId)` are the extension seams.
-- Group/room sections in the roster (ALARA groups) — pending a server
+- **Creator rooms — client implemented, NOT yet operational.** v0.8.0
+  ships the full client side against docs/BOT_ROOMS_API.md: Rooms tab,
+  server-discovered rooms, one persistent transcript, structured
+  member-only @mentions with idempotency ids, manager-only frontstage
+  with specialists collapsed into activity rows, media via the existing
+  MEDIA pipeline, stop/steer/approvals on the shared runs engine, and a
+  quiet "Rooms require a newer ALARA server" state. It stays dormant
+  until Codex deploys the VPS endpoints and advertises
+  `features.bot_mode_rooms`; rooms must NOT be claimed operational until
+  an end-to-end test against the live VPS passes.
+- Group sections in the BOTS roster (ALARA groups) — pending a server
   contract for group membership.
 - "Active now" strip above the roster — pending; per-row presence dots
   cover the need meanwhile.

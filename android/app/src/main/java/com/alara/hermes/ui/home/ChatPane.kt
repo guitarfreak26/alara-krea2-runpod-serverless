@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -140,6 +141,51 @@ fun ChatPane(
             onBack = onBack,
             onOpenConfig = { configSheetOpen = true },
         )
+        // Room context: keep the member roster visible; tap for roles.
+        chat.room?.let { room ->
+            var membersOpen by remember { mutableStateOf(false) }
+            Text(
+                room.members.joinToString("  ·  ") { it.displayName },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { membersOpen = true }
+                    .padding(horizontal = 18.dp, vertical = 3.dp),
+            )
+            if (membersOpen) {
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { membersOpen = false },
+                    title = { Text(room.displayName) },
+                    text = {
+                        Column {
+                            room.members.forEach { member ->
+                                Text(
+                                    "${member.displayName} — ${member.role}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.padding(vertical = 4.dp),
+                                )
+                            }
+                            room.description?.let {
+                                Text(
+                                    it,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(top = 8.dp),
+                                )
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { membersOpen = false }) {
+                            Text("Close")
+                        }
+                    },
+                )
+            }
+        }
 
         Box(Modifier.weight(1f)) {
             LazyColumn(
@@ -232,6 +278,7 @@ fun ChatPane(
             onDraftChange = viewModel::saveDraft,
             pendingShare = pendingShare,
             onShareConsumed = onShareConsumed,
+            roomMembers = chat.room?.members.orEmpty(),
             modifier = Modifier.navigationBarsPadding(),
         )
     }

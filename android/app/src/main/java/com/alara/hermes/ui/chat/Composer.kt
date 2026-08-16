@@ -23,6 +23,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Stop
@@ -117,6 +118,8 @@ fun Composer(
     onDraftChange: (String, String) -> Unit,
     pendingShare: com.alara.hermes.SharePayload? = null,
     onShareConsumed: () -> Unit = {},
+    /** Room context: the @ picker offers ONLY these members. */
+    roomMembers: List<com.alara.hermes.protocol.RoomMember> = emptyList(),
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -367,6 +370,42 @@ fun Composer(
                             pickFiles.launch(arrayOf("*/*"))
                         },
                     )
+                }
+            }
+            if (roomMembers.isNotEmpty()) {
+                var mentionMenuOpen by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(onClick = { mentionMenuOpen = true }) {
+                        Icon(
+                            Icons.Filled.AlternateEmail,
+                            contentDescription = "Mention a member",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    androidx.compose.material3.DropdownMenu(
+                        expanded = mentionMenuOpen,
+                        onDismissRequest = { mentionMenuOpen = false },
+                    ) {
+                        roomMembers.forEach { member ->
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text("@${member.displayName}")
+                                        Text(
+                                            member.role,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    mentionMenuOpen = false
+                                    val prefix = if (text.isEmpty() || text.endsWith(" ")) "" else " "
+                                    text += "$prefix@${member.displayName} "
+                                },
+                            )
+                        }
+                    }
                 }
             }
             BasicTextField(
