@@ -436,9 +436,13 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     private fun openSessionAsThread(sessionKey: String?) {
         val gw = gateway ?: return
         val profile = _state.value.activeProfile
-        closeChat()
+        // Tear down the previous handle then set the NEW chat state in one
+        // update — never an intermediate empty ChatUiState, which painted a
+        // blank frame (visible flicker) on every conversation switch.
+        tearDownHandle()
         _state.update {
             it.copy(
+                models = emptyList(),
                 chat = ChatUiState(
                     sessionKey = sessionKey,
                     title = it.sessions.firstOrNull { s -> s.key == sessionKey }?.title ?: "New conversation",
@@ -482,11 +486,16 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun closeChat() {
+    /** Release the open handle WITHOUT blanking chat state (no flash). */
+    private fun tearDownHandle() {
         handleJobs.forEach { it.cancel() }
         handleJobs.clear()
         handle?.close()
         handle = null
+    }
+
+    fun closeChat() {
+        tearDownHandle()
         _state.update { it.copy(chat = ChatUiState(), models = emptyList()) }
     }
 
@@ -545,10 +554,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun openRoom(room: com.alara.hermes.protocol.BotRoom) {
         val gw = gateway ?: return
-        closeChat()
+        tearDownHandle()
         _state.update {
             it.copy(
                 activeProfile = room.managerProfileId,
+                models = emptyList(),
                 chat = ChatUiState(sessionKey = room.sessionKey, title = room.displayName, room = room),
             )
         }

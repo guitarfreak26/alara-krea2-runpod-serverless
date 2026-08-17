@@ -150,8 +150,12 @@ fun MessageBubble(
                                 )
                             }
                             else -> {
-                                // MEDIA: directives render as players, not paths.
-                                val display = com.alara.hermes.protocol.MediaDirectives.strip(entry.text)
+                                // MEDIA: directives render as players, not paths;
+                                // lone newlines become hard breaks so messenger-
+                                // style replies don't glue into text walls.
+                                val display = com.alara.hermes.protocol.ChatFormatting.chatLineBreaks(
+                                    com.alara.hermes.protocol.MediaDirectives.strip(entry.text),
+                                )
                                 Markdown(
                                     content = display.ifBlank { entry.text },
                                     components = markdownComponents(
