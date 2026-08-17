@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -441,6 +442,7 @@ internal fun BotRow(
     mediaAuth: MediaAuth?,
     onClick: () -> Unit,
     onLongClick: (() -> Unit)? = null,
+    pinned: Boolean = false,
 ) {
     // Per-bot presence, native-plugin semantics: busy now, or wrote within
     // the last 90 seconds. Null when the server sent no summary fields —
@@ -481,6 +483,15 @@ internal fun BotRow(
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (pinned) {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.Filled.PushPin,
+                        contentDescription = "Pinned",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Spacer(Modifier.width(5.dp))
+                }
                 Text(
                     profile.displayName,
                     style = MaterialTheme.typography.bodyLarge,

@@ -63,6 +63,7 @@ class SettingsRepository(
         val LastOpenSession = stringPreferencesKey("last_open_session")
         val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
         val ProfileNames = stringPreferencesKey("profile_names")
+        val PinnedBots = stringSetPreferencesKey("pinned_bots")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -150,6 +151,18 @@ class SettingsRepository(
             prefs[Keys.ProfileNames] = names.map { it.trim() }
                 .filter { it.isNotEmpty() }
                 .joinToString(",")
+        }
+    }
+
+    /** Bots pinned to the top of the agent roster (under rooms). Local pref. */
+    val pinnedBots: Flow<Set<String>> =
+        context.dataStore.data.map { it[Keys.PinnedBots] ?: emptySet() }
+
+    suspend fun togglePinnedBot(profileId: String) {
+        context.dataStore.edit { prefs ->
+            val current = prefs[Keys.PinnedBots] ?: emptySet()
+            prefs[Keys.PinnedBots] =
+                if (profileId in current) current - profileId else current + profileId
         }
     }
 

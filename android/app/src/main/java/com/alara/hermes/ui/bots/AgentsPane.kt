@@ -42,6 +42,7 @@ import com.alara.hermes.ui.theme.HermesColors
  * their own tab; this list is the front door.
  */
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 fun AgentsPane(
     viewModel: HomeViewModel,
     onOpenMenu: () -> Unit,
@@ -53,6 +54,9 @@ fun AgentsPane(
     var editTarget by androidx.compose.runtime.remember {
         androidx.compose.runtime.mutableStateOf<HermesProfile?>(null)
     }
+    var menuTarget by androidx.compose.runtime.remember {
+        androidx.compose.runtime.mutableStateOf<HermesProfile?>(null)
+    }
 
     LaunchedEffect(Unit) {
         viewModel.reloadProfiles()
@@ -61,6 +65,44 @@ fun AgentsPane(
 
     editTarget?.let { profile ->
         AvatarEditorSheet(profile, viewModel, onDismiss = { editTarget = null })
+    }
+
+    menuTarget?.let { profile ->
+        val pinned = profile.id in state.pinnedBots
+        androidx.compose.material3.ModalBottomSheet(onDismissRequest = { menuTarget = null }) {
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text(
+                    profile.displayName,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                )
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Text(
+                    if (pinned) "Unpin" else "Pin to top",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            viewModel.togglePinnedBot(profile.id)
+                            menuTarget = null
+                        }
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
+                )
+                Text(
+                    "Edit look",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable {
+                            menuTarget = null
+                            viewModel.ensureAvatarEditing { supported ->
+                                if (supported) editTarget = profile
+                            }
+                        }
+                        .padding(horizontal = 24.dp, vertical = 14.dp),
+                )
+            }
+        }
     }
 
     Column(
@@ -115,21 +157,18 @@ fun AgentsPane(
                         RoomRow(room, mediaAuth) { onOpenRoom(room) }
                     }
                 }
-                items(state.profiles, key = { "bot:${it.id}" }) { profile ->
+                // Pinned bots sit directly under the rooms; order is otherwise
+                // the server's roster order, unchanged.
+                val ordered = state.profiles.sortedByDescending { it.id in state.pinnedBots }
+                items(ordered, key = { "bot:${it.id}" }) { profile ->
                     BotRow(
                         profile = profile,
                         selected = profile.id == state.activeProfile &&
                             state.chat.room == null && state.chat.sessionKey != null,
                         mediaAuth = mediaAuth,
+                        pinned = profile.id in state.pinnedBots,
                         onClick = { onOpenBot(profile) },
-                        onLongClick = {
-                            // ensureAvatarEditing re-probes a stale capability
-                            // cache; the "newer server" notice only appears
-                            // when a live probe explicitly says false.
-                            viewModel.ensureAvatarEditing { supported ->
-                                if (supported) editTarget = profile
-                            }
-                        },
+                        onLongClick = { menuTarget = profile },
                     )
                 }
             }

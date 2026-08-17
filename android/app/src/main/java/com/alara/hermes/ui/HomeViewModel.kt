@@ -57,6 +57,8 @@ data class HomeUiState(
     val hiddenSources: Set<String> = emptySet(),
     /** Server-defined Bot Mode rooms; empty when unsupported or none exist. */
     val rooms: List<com.alara.hermes.protocol.BotRoom> = emptyList(),
+    /** Bots pinned to the roster top (under rooms); local preference. */
+    val pinnedBots: Set<String> = emptySet(),
 )
 
 class HomeViewModel(private val container: AppContainer) : ViewModel() {
@@ -97,6 +99,15 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 _state.update { it.copy(hiddenSources = hidden) }
             }
         }
+        viewModelScope.launch {
+            container.settings.pinnedBots.collect { pinned ->
+                _state.update { it.copy(pinnedBots = pinned) }
+            }
+        }
+    }
+
+    fun togglePinnedBot(profileId: String) {
+        viewModelScope.launch { container.settings.togglePinnedBot(profileId) }
     }
 
     /**
