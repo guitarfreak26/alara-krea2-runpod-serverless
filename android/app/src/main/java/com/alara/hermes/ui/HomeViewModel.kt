@@ -207,11 +207,21 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         gateway = gw
         _state.update { it.copy(features = gw.features) }
         viewModelScope.launch {
+            var wasConnected = false
             gw.connection.collect { c ->
                 // features is computed from server capabilities, which land with
                 // the first successful connect — re-read it on every transition
                 // so pin/archive/rename gates reflect the real server.
                 _state.update { it.copy(connection = c, features = gw.features) }
+                // Rooms/roster gates flip ON with the capability probe: reload
+                // them when a connection lands, or a cold start shows an empty
+                // Rooms list until the pane happens to reopen.
+                val connected = c is ConnectionState.Connected
+                if (connected && !wasConnected) {
+                    loadRooms()
+                    loadProfiles(_state.value.activeProfile)
+                }
+                wasConnected = connected
             }
         }
         viewModelScope.launch { gw.sessionsChanged.collect { refreshSessions(silent = true) } }
@@ -280,7 +290,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.setProfileAppearance(profileId, shape, color, clearImage) }
-                .onSuccess {
+                .onSuccess { updated ->
+                    applyAppearance(profileId, updated)
                     loadProfiles(_state.value.activeProfile)
                     loadRooms()
                     onDone(true)
@@ -289,6 +300,27 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                     _state.update { it.copy(notice = clean(t.message)) }
                     onDone(false)
                 }
+        }
+    }
+
+    /** The write response is authoritative — reflect it before the refetch. */
+    private fun applyAppearance(
+        profileId: String,
+        appearance: com.alara.hermes.protocol.ProfileAppearance,
+    ) {
+        _state.update { st ->
+            st.copy(profiles = st.profiles.map { p ->
+                if (p.id == profileId) {
+                    p.copy(
+                        avatarShape = appearance.shape ?: p.avatarShape,
+                        avatarColor = appearance.color ?: p.avatarColor,
+                        avatarUrl = appearance.imageUrl,
+                        appearanceRevision = appearance.revision ?: p.appearanceRevision,
+                    )
+                } else {
+                    p
+                }
+            })
         }
     }
 
@@ -301,7 +333,8 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         val gw = gateway ?: return
         viewModelScope.launch {
             runCatching { gw.uploadProfileAvatar(profileId, imageBase64, mimeType) }
-                .onSuccess {
+                .onSuccess { updated ->
+                    applyAppearance(profileId, updated)
                     loadProfiles(_state.value.activeProfile)
                     loadRooms()
                     onDone(true)

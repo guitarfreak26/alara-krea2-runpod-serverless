@@ -313,9 +313,15 @@ internal fun BotAvatar(
     val url = profile.avatarUrl
     if (!url.isNullOrBlank()) {
         val context = androidx.compose.ui.platform.LocalContext.current
-        val request = androidx.compose.runtime.remember(url) {
+        // The server keeps image_url stable and bumps appearance_revision on
+        // change — key both caches on the revision so a new upload actually
+        // shows instead of the stale cached image.
+        val cacheKey = "$url#rev=${profile.appearanceRevision.orEmpty()}"
+        val request = androidx.compose.runtime.remember(url, profile.appearanceRevision) {
             coil.request.ImageRequest.Builder(context)
                 .data(url)
+                .memoryCacheKey(cacheKey)
+                .diskCacheKey(cacheKey)
                 .apply {
                     val host = runCatching { java.net.URI(url).host }.getOrNull()
                     if (mediaAuth != null && host != null &&

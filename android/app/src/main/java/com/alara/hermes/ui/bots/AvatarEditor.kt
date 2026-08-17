@@ -74,17 +74,45 @@ fun AvatarEditorSheet(
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
             saving = true
+            // Re-encode whatever the picker returns as a bounded JPEG: reads
+            // any content URI, dodges the 2 MB server cap, uniform mime.
             val payload = withContext(Dispatchers.IO) {
                 runCatching {
-                    val mime = context.contentResolver.getType(uri) ?: "image/jpeg"
-                    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    if (bytes == null || bytes.size > MAX_AVATAR_BYTES) null
-                    else Base64.encodeToString(bytes, Base64.NO_WRAP) to mime
+                    val bounds = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    context.contentResolver.openInputStream(uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it, null, bounds)
+                    }
+                    val maxSide = maxOf(bounds.outWidth, bounds.outHeight)
+                    if (maxSide <= 0) return@runCatching null
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inSampleSize = Integer.highestOneBit(maxOf(1, maxSide / 512))
+                    }
+                    val bitmap = context.contentResolver.openInputStream(uri)?.use {
+                        android.graphics.BitmapFactory.decodeStream(it, null, options)
+                    } ?: return@runCatching null
+                    val side = maxOf(bitmap.width, bitmap.height)
+                    val scaled = if (side > 512) {
+                        val scale = 512f / side
+                        android.graphics.Bitmap.createScaledBitmap(
+                            bitmap,
+                            (bitmap.width * scale).toInt().coerceAtLeast(1),
+                            (bitmap.height * scale).toInt().coerceAtLeast(1),
+                            true,
+                        )
+                    } else {
+                        bitmap
+                    }
+                    val out = java.io.ByteArrayOutputStream()
+                    scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
+                    if (out.size() > MAX_AVATAR_BYTES) return@runCatching null
+                    Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP) to "image/jpeg"
                 }.getOrNull()
             }
             if (payload == null) {
                 saving = false
-                viewModel.showNotice("Couldn't read that image (2 MB max)")
+                viewModel.showNotice("Couldn't read that image")
             } else {
                 viewModel.uploadAvatar(profile.id, payload.first, payload.second) { ok ->
                     saving = false

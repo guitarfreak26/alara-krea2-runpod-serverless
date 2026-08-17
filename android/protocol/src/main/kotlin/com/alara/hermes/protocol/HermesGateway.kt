@@ -140,7 +140,7 @@ interface HermesGateway {
         shape: String? = null,
         color: String? = null,
         clearImage: Boolean = false,
-    ): Unit = throw com.alara.hermes.protocol.wire.HermesRpcException(
+    ): ProfileAppearance = throw com.alara.hermes.protocol.wire.HermesRpcException(
         "Avatar editing requires a newer ALARA server",
     )
 
@@ -148,7 +148,7 @@ interface HermesGateway {
         profileId: String,
         imageBase64: String,
         mimeType: String,
-    ): Unit = throw com.alara.hermes.protocol.wire.HermesRpcException(
+    ): ProfileAppearance = throw com.alara.hermes.protocol.wire.HermesRpcException(
         "Avatar editing requires a newer ALARA server",
     )
 

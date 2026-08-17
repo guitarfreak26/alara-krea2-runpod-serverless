@@ -24,6 +24,16 @@ data class HermesProfile(
     val handle: String? = null,
     /** Server-assigned roster group (e.g. "Seoyeon Team"). */
     val group: String? = null,
+    /** Bumped by the server on avatar changes; image caches key on it. */
+    val appearanceRevision: String? = null,
+)
+
+/** Updated avatar state returned by the appearance write routes. */
+data class ProfileAppearance(
+    val shape: String? = null,
+    val color: String? = null,
+    val imageUrl: String? = null,
+    val revision: String? = null,
 )
 
 /** One member of a server-defined Bot Mode room. */

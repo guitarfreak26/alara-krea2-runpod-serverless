@@ -40,11 +40,13 @@ class ApiServerGatewayTest {
         sessionResources: Boolean = true,
         sessionUpdate: Boolean = true,
         archivedListing: Boolean = false,
+        botAppearance: Boolean = false,
     ) = buildString {
         append("""{"object":"hermes.api_server.capabilities","platform":"hermes-agent","model":"hermes-4",""")
         append(""""auth":{"type":"bearer","required":true},""")
         append(""""features":{"chat_completions":true,"session_resources":$sessionResources""")
         if (archivedListing) append(""","session_archived_listing":true""")
+        if (botAppearance) append(""","bot_appearance":true""")
         append("},")
         append(""""endpoints":{"chat_completions":{"method":"POST","path":"/v1/chat/completions"}""")
         if (sessionResources) append(""","sessions":{"method":"GET","path":"/api/sessions"}""")
@@ -382,6 +384,54 @@ class ApiServerGatewayTest {
         gw.setActiveProfile("malgrok")
         val other = gw.mediaUrl("/opt/data/media-jobs/x.mp4")!!
         assertTrue(other.contains("/p/malgrok/") && !other.contains("solseoyeon"))
+    }
+
+    @Test
+    fun `appearance writes hit the contract routes and return avatar state`() = runBlocking {
+        server.enqueue(MockResponse().setBody(capabilitiesBody(botAppearance = true)))
+        gateway.testConnection().getOrThrow()
+        assertTrue(gateway.features.avatarEditing)
+        server.takeRequest()
+
+        server.enqueue(
+            MockResponse().setBody(
+                """{"object":"hermes.profile.appearance","profile":"mina",
+                    "appearance_revision":"7",
+                    "avatar":{"shape":"drop","color":"#ec4899","image_url":null}}""",
+            ),
+        )
+        val patched = gateway.setProfileAppearance("mina", shape = "drop", color = "#ec4899")
+        val patch = server.takeRequest()
+        assertEquals("PATCH", patch.method)
+        assertEquals("/v1/profiles/mina/appearance", patch.path)
+        val body = patch.body.readUtf8()
+        assertTrue(body.contains("\"shape\":\"drop\"") && body.contains("\"color\":\"#ec4899\""))
+        assertEquals("Bearer api-key", patch.getHeader("Authorization"))
+        assertEquals("drop", patched.shape)
+        assertEquals("7", patched.revision)
+
+        server.enqueue(
+            MockResponse().setBody(
+                """{"avatar":{"shape":null,"color":null,
+                    "image_url":"http://gateway/v1/media?path=%2Favatars%2Fmina.jpg"},
+                    "appearance_revision":"8"}""",
+            ),
+        )
+        val uploaded = gateway.uploadProfileAvatar("mina", "aGk=", "image/jpeg")
+        val post = server.takeRequest()
+        assertEquals("POST", post.method)
+        assertEquals("/v1/profiles/mina/appearance/image", post.path)
+        assertTrue(post.body.readUtf8().contains("\"image_base64\":\"aGk=\""))
+        assertTrue(uploaded.imageUrl!!.contains("/v1/media?path="))
+        assertEquals("8", uploaded.revision)
+
+        // Non-2xx surfaces the server's message, loudly.
+        server.enqueue(
+            MockResponse().setResponseCode(422)
+                .setBody("""{"error":{"code":"invalid_shape","message":"unknown shape: blob"}}"""),
+        )
+        val failure = runCatching { gateway.setProfileAppearance("mina", shape = "blob") }
+        assertTrue(failure.exceptionOrNull()?.message.orEmpty().contains("unknown shape"))
     }
 
     @Test

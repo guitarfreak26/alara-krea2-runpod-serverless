@@ -327,6 +327,7 @@ class ApiServerGateway(
                     ?: str("active")?.toBooleanStrictOrNull(),
                 handle = str("handle"),
                 group = str("group"),
+                appearanceRevision = str("appearance_revision") ?: astr("revision"),
             )
         }
         if (profiles.isNotEmpty()) profilePrefixes = prefixes
@@ -476,12 +477,16 @@ class ApiServerGateway(
         return handle
     }
 
-    private suspend fun appearanceRequest(profileId: String, path: String, body: JsonObject) {
+    private suspend fun appearanceRequest(
+        profileId: String,
+        path: String,
+        body: JsonObject,
+    ): ProfileAppearance {
         if (capabilities == null) connect()
         if (capabilities?.botAppearance != true) {
             throw HermesRpcException("Avatar editing requires a newer ALARA server")
         }
-        withContext(Dispatchers.IO) {
+        val payload = withContext(Dispatchers.IO) {
             val target = if (path.isEmpty()) {
                 rootUrl("v1/profiles", profileId, "appearance")
             } else {
@@ -494,10 +499,10 @@ class ApiServerGateway(
                 builder.post(body.toString().toRequestBody(jsonMedia))
             }
             restClient.newCall(req.build()).execute().use { response ->
+                val text = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    val payload = response.body?.string().orEmpty()
                     val message = runCatching {
-                        (((json.parseToJsonElement(payload) as? JsonObject)
+                        (((json.parseToJsonElement(text) as? JsonObject)
                             ?.get("error") as? JsonObject)
                             ?.get("message") as? JsonPrimitive)?.contentOrNull
                     }.getOrNull()
@@ -506,8 +511,20 @@ class ApiServerGateway(
                         message ?: "appearance update failed: HTTP ${response.code}",
                     )
                 }
+                runCatching { json.parseToJsonElement(text) as? JsonObject }.getOrNull()
             }
         }
+        // The response is the authoritative avatar state — callers apply it
+        // locally so the roster updates before the profiles refetch lands.
+        val avatar = payload?.get("avatar") as? JsonObject
+        fun astr(key: String) = (avatar?.get(key) as? JsonPrimitive)?.contentOrNull
+        return ProfileAppearance(
+            shape = astr("shape"),
+            color = astr("color"),
+            imageUrl = astr("image_url"),
+            revision = (payload?.get("appearance_revision") as? JsonPrimitive)?.contentOrNull
+                ?: astr("revision"),
+        )
     }
 
     override suspend fun setProfileAppearance(
@@ -515,24 +532,20 @@ class ApiServerGateway(
         shape: String?,
         color: String?,
         clearImage: Boolean,
-    ) {
-        appearanceRequest(profileId, "", buildJsonObject {
-            shape?.let { put("shape", it) }
-            color?.let { put("color", it) }
-            if (clearImage) put("clear_image", true)
-        })
-    }
+    ): ProfileAppearance = appearanceRequest(profileId, "", buildJsonObject {
+        shape?.let { put("shape", it) }
+        color?.let { put("color", it) }
+        if (clearImage) put("clear_image", true)
+    })
 
     override suspend fun uploadProfileAvatar(
         profileId: String,
         imageBase64: String,
         mimeType: String,
-    ) {
-        appearanceRequest(profileId, "image", buildJsonObject {
-            put("image_base64", imageBase64)
-            put("mime_type", mimeType)
-        })
-    }
+    ): ProfileAppearance = appearanceRequest(profileId, "image", buildJsonObject {
+        put("image_base64", imageBase64)
+        put("mime_type", mimeType)
+    })
 
     override suspend fun forkSession(sessionKey: String): String {
         val payload = withContext(Dispatchers.IO) {
