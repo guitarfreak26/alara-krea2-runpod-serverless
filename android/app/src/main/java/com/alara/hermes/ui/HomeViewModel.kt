@@ -265,6 +265,54 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { loadProfiles(_state.value.activeProfile) }
     }
 
+    fun showNotice(message: String) {
+        _state.update { it.copy(notice = message) }
+    }
+
+    /** Backend-synced avatar edit; the roster re-reads so desktop agrees. */
+    fun editAppearance(
+        profileId: String,
+        shape: String? = null,
+        color: String? = null,
+        clearImage: Boolean = false,
+        onDone: (Boolean) -> Unit = {},
+    ) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            runCatching { gw.setProfileAppearance(profileId, shape, color, clearImage) }
+                .onSuccess {
+                    loadProfiles(_state.value.activeProfile)
+                    loadRooms()
+                    onDone(true)
+                }
+                .onFailure { t ->
+                    _state.update { it.copy(notice = clean(t.message)) }
+                    onDone(false)
+                }
+        }
+    }
+
+    fun uploadAvatar(
+        profileId: String,
+        imageBase64: String,
+        mimeType: String,
+        onDone: (Boolean) -> Unit = {},
+    ) {
+        val gw = gateway ?: return
+        viewModelScope.launch {
+            runCatching { gw.uploadProfileAvatar(profileId, imageBase64, mimeType) }
+                .onSuccess {
+                    loadProfiles(_state.value.activeProfile)
+                    loadRooms()
+                    onDone(true)
+                }
+                .onFailure { t ->
+                    _state.update { it.copy(notice = clean(t.message)) }
+                    onDone(false)
+                }
+        }
+    }
+
     fun refreshSessions(silent: Boolean = false) {
         val gw = gateway ?: return
         viewModelScope.launch {

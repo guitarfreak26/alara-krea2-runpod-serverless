@@ -130,6 +130,28 @@ interface HermesGateway {
     suspend fun openRoom(room: BotRoom): SessionHandle =
         throw com.alara.hermes.protocol.wire.HermesRpcException("Rooms require a newer ALARA server")
 
+    /**
+     * Backend-synced avatar edits (docs/BOT_APPEARANCE_API.md). Presentation
+     * only — never profile configuration. Valid when
+     * [GatewayFeatures.avatarEditing]; throws otherwise.
+     */
+    suspend fun setProfileAppearance(
+        profileId: String,
+        shape: String? = null,
+        color: String? = null,
+        clearImage: Boolean = false,
+    ): Unit = throw com.alara.hermes.protocol.wire.HermesRpcException(
+        "Avatar editing requires a newer ALARA server",
+    )
+
+    suspend fun uploadProfileAvatar(
+        profileId: String,
+        imageBase64: String,
+        mimeType: String,
+    ): Unit = throw com.alara.hermes.protocol.wire.HermesRpcException(
+        "Avatar editing requires a newer ALARA server",
+    )
+
     /** Installed skills, read-only. */
     suspend fun listSkills(): List<SkillInfo>
 

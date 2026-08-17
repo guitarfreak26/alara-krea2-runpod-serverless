@@ -111,6 +111,8 @@ class ApiServerGateway(
         val accountUsage: Boolean? = null,
         /** Server-backed Bot Mode rooms (docs/BOT_ROOMS_API.md). */
         val botModeRooms: Boolean = false,
+        /** Editable backend-synced avatars (docs/BOT_APPEARANCE_API.md). */
+        val botAppearance: Boolean = false,
         val skillsApi: Boolean? = null,
         val jobsAvailable: Boolean? = null,
         val model: String? = null,
@@ -132,6 +134,7 @@ class ApiServerGateway(
             sessionConfig = true,
             archivedListing = capabilities?.archivedListing == true,
             botRooms = capabilities?.botModeRooms == true,
+            avatarEditing = capabilities?.botAppearance == true,
             skills = capabilities?.skillsApi != false,
             automations = capabilities?.jobsAvailable != false,
         )
@@ -245,6 +248,8 @@ class ApiServerGateway(
             accountUsage = (features?.get("account_usage") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
             botModeRooms = (features?.get("bot_mode_rooms") as? JsonPrimitive)
+                ?.contentOrNull?.toBooleanStrictOrNull() == true,
+            botAppearance = (features?.get("bot_appearance") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull() == true,
             skillsApi = (features?.get("skills_api") as? JsonPrimitive)
                 ?.contentOrNull?.toBooleanStrictOrNull(),
@@ -469,6 +474,64 @@ class ApiServerGateway(
             ApiSessionHandle(room.sessionKey, roomId = room.id)
         }
         return handle
+    }
+
+    private suspend fun appearanceRequest(profileId: String, path: String, body: JsonObject) {
+        if (capabilities == null) connect()
+        if (capabilities?.botAppearance != true) {
+            throw HermesRpcException("Avatar editing requires a newer ALARA server")
+        }
+        withContext(Dispatchers.IO) {
+            val target = if (path.isEmpty()) {
+                rootUrl("v1/profiles", profileId, "appearance")
+            } else {
+                rootUrl("v1/profiles", profileId, "appearance", path)
+            }
+            val builder = request(target)
+            val req = if (path.isEmpty()) {
+                builder.patch(body.toString().toRequestBody(jsonMedia))
+            } else {
+                builder.post(body.toString().toRequestBody(jsonMedia))
+            }
+            restClient.newCall(req.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val payload = response.body?.string().orEmpty()
+                    val message = runCatching {
+                        (((json.parseToJsonElement(payload) as? JsonObject)
+                            ?.get("error") as? JsonObject)
+                            ?.get("message") as? JsonPrimitive)?.contentOrNull
+                    }.getOrNull()
+                    throw HermesHttpException(
+                        response.code,
+                        message ?: "appearance update failed: HTTP ${response.code}",
+                    )
+                }
+            }
+        }
+    }
+
+    override suspend fun setProfileAppearance(
+        profileId: String,
+        shape: String?,
+        color: String?,
+        clearImage: Boolean,
+    ) {
+        appearanceRequest(profileId, "", buildJsonObject {
+            shape?.let { put("shape", it) }
+            color?.let { put("color", it) }
+            if (clearImage) put("clear_image", true)
+        })
+    }
+
+    override suspend fun uploadProfileAvatar(
+        profileId: String,
+        imageBase64: String,
+        mimeType: String,
+    ) {
+        appearanceRequest(profileId, "image", buildJsonObject {
+            put("image_base64", imageBase64)
+            put("mime_type", mimeType)
+        })
     }
 
     override suspend fun forkSession(sessionKey: String): String {

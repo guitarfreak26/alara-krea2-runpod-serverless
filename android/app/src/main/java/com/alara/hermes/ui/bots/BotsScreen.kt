@@ -2,7 +2,9 @@ package com.alara.hermes.ui.bots
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -287,11 +289,11 @@ internal fun RoomRow(room: BotRoom, mediaAuth: MediaAuth?, onClick: () -> Unit) 
  * installed ALARA plugin syncs custom avatars through the backend; when
  * /v1/profiles advertises avatar metadata it wins over this default.
  */
-private val AVATAR_SHAPES = listOf("circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop")
+internal val AVATAR_SHAPES = listOf("circle", "squircle", "pill", "triangle", "hexagon", "cloud", "drop")
 private val AVATAR_BODY = Color(0xFFF97316)
 private val AVATAR_INK = Color(0xFF1C1917)
 
-private fun defaultShapeFor(name: String): String {
+internal fun defaultShapeFor(name: String): String {
     var hash = 0u
     for (ch in name) hash = hash * 31u + ch.code.toUInt()
     return AVATAR_SHAPES[(hash % AVATAR_SHAPES.size.toUInt()).toInt()]
@@ -426,11 +428,13 @@ internal fun GeometricAvatar(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 internal fun BotRow(
     profile: HermesProfile,
     selected: Boolean,
     mediaAuth: MediaAuth?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     // Per-bot presence, native-plugin semantics: busy now, or wrote within
     // the last 90 seconds. Null when the server sent no summary fields —
@@ -449,7 +453,7 @@ internal fun BotRow(
                 if (selected) MaterialTheme.colorScheme.surfaceContainerLow
                 else MaterialTheme.colorScheme.background,
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         Box {
