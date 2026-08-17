@@ -145,13 +145,22 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
      */
     fun visibleSessions(state: HomeUiState = _state.value): List<SessionSummary> {
         val hidden = state.hiddenSources
+        // Room transcripts are NOT ordinary threads: they render only through
+        // the Room screen, so their session ids never appear in this list.
+        val roomKeys = state.rooms.mapTo(HashSet()) { it.sessionKey }
         if (!state.showArchived) {
-            return state.sessions.filter { !it.archived && sourceVisible(it, hidden) }
+            return state.sessions.filter {
+                !it.archived && it.key !in roomKeys && sourceVisible(it, hidden)
+            }
         }
         if (state.features.archivedListing) {
-            return state.sessions.filter { it.archived && sourceVisible(it, hidden) }
+            return state.sessions.filter {
+                it.archived && it.key !in roomKeys && sourceVisible(it, hidden)
+            }
         }
-        val serverArchived = state.sessions.filter { it.archived && sourceVisible(it, hidden) }
+        val serverArchived = state.sessions.filter {
+            it.archived && it.key !in roomKeys && sourceVisible(it, hidden)
+        }
         val serverKeys = state.sessions.map { it.key }.toSet()
         val registryOnly = archivedEntries.value
             .filter { it.sessionKey !in serverKeys }
@@ -400,6 +409,31 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     // ---- chat --------------------------------------------------------------
 
     fun openSession(sessionKey: String?) {
+        val gw = gateway ?: return
+        // A room's session id must ALWAYS open the Room screen — never an
+        // ordinary thread — regardless of how it arrived (notification tap,
+        // deep link, resume, a list that slipped through).
+        if (sessionKey != null) {
+            _state.value.rooms.firstOrNull { it.sessionKey == sessionKey }?.let { room ->
+                openRoom(room)
+                return
+            }
+            // Cold start: a notification can land before room discovery ran.
+            // Resolve rooms first rather than misrouting to a plain thread.
+            if (gw.features.botRooms && _state.value.rooms.isEmpty()) {
+                viewModelScope.launch {
+                    val rooms = runCatching { gw.listBotRooms() }.getOrDefault(emptyList())
+                    if (rooms.isNotEmpty()) _state.update { it.copy(rooms = rooms) }
+                    val room = rooms.firstOrNull { it.sessionKey == sessionKey }
+                    if (room != null) openRoom(room) else openSessionAsThread(sessionKey)
+                }
+                return
+            }
+        }
+        openSessionAsThread(sessionKey)
+    }
+
+    private fun openSessionAsThread(sessionKey: String?) {
         val gw = gateway ?: return
         val profile = _state.value.activeProfile
         closeChat()
