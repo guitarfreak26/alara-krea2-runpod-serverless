@@ -2,23 +2,28 @@ package com.alara.hermes.ui.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Forum
 import androidx.compose.material.icons.outlined.DataUsage
 import androidx.compose.material.icons.outlined.Schedule
-import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.NavigationDrawerItemDefaults
 import androidx.compose.material3.SnackbarHost
@@ -165,33 +170,77 @@ fun HomeScreen(
                 navigator = navigator,
                 listPane = {
                     AnimatedPane {
-                        SessionListPane(
-                            state = state,
-                            onOpenSession = { key ->
-                                viewModel.openSession(key)
-                                scope.launch {
-                                    navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key ?: "new")
+                        // Chat-first: the agent roster is home; the raw thread
+                        // list is one bottom-tab away, unchanged underneath.
+                        var listTab by androidx.compose.runtime.saveable.rememberSaveable {
+                            androidx.compose.runtime.mutableStateOf(0)
+                        }
+                        Column(Modifier.fillMaxSize()) {
+                            Box(Modifier.weight(1f)) {
+                                if (listTab == 0) {
+                                    com.alara.hermes.ui.bots.AgentsPane(
+                                        viewModel = viewModel,
+                                        onOpenMenu = { scope.launch { drawerState.open() } },
+                                        onOpenBot = { profile -> viewModel.openBotChat(profile.id) },
+                                        onOpenRoom = { room -> viewModel.openRoom(room) },
+                                    )
+                                } else {
+                                    SessionListPane(
+                                        state = state,
+                                        onOpenSession = { key ->
+                                            viewModel.openSession(key)
+                                            scope.launch {
+                                                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key ?: "new")
+                                            }
+                                        },
+                                        onSwitchProfile = viewModel::switchProfile,
+                                        onSearch = viewModel::setSearchQuery,
+                                        onRename = viewModel::renameSession,
+                                        onDelete = viewModel::deleteSession,
+                                        onPin = viewModel::setPinned,
+                                        onArchive = viewModel::setArchived,
+                                        onToggleArchivedView = viewModel::toggleArchivedView,
+                                        visibleSessions = viewModel.visibleSessions(state),
+                                        onRefresh = { viewModel.refreshSessions() },
+                                        onOpenMenu = { scope.launch { drawerState.open() } },
+                                        sourceOptions = viewModel.sourceFilterOptions(state),
+                                        onToggleSource = viewModel::toggleSourceFilter,
+                                        onFork = { key ->
+                                            viewModel.forkSession(key)
+                                            scope.launch {
+                                                navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
+                                            }
+                                        },
+                                    )
                                 }
-                            },
-                            onSwitchProfile = viewModel::switchProfile,
-                            onSearch = viewModel::setSearchQuery,
-                            onRename = viewModel::renameSession,
-                            onDelete = viewModel::deleteSession,
-                            onPin = viewModel::setPinned,
-                            onArchive = viewModel::setArchived,
-                            onToggleArchivedView = viewModel::toggleArchivedView,
-                            visibleSessions = viewModel.visibleSessions(state),
-                            onRefresh = { viewModel.refreshSessions() },
-                            onOpenMenu = { scope.launch { drawerState.open() } },
-                            sourceOptions = viewModel.sourceFilterOptions(state),
-                            onToggleSource = viewModel::toggleSourceFilter,
-                            onFork = { key ->
-                                viewModel.forkSession(key)
-                                scope.launch {
-                                    navigator.navigateTo(ListDetailPaneScaffoldRole.Detail, key)
-                                }
-                            },
-                        )
+                            }
+                            NavigationBar(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+                            ) {
+                                NavigationBarItem(
+                                    selected = listTab == 0,
+                                    onClick = { listTab = 0 },
+                                    icon = {
+                                        Icon(
+                                            Icons.Outlined.Forum,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    label = { Text("Chats") },
+                                )
+                                NavigationBarItem(
+                                    selected = listTab == 1,
+                                    onClick = { listTab = 1 },
+                                    icon = {
+                                        Icon(
+                                            Icons.AutoMirrored.Outlined.List,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                    label = { Text("Threads") },
+                                )
+                            }
+                        }
                     }
                 },
                 detailPane = {
@@ -231,7 +280,6 @@ private fun HomeDrawer(
         // Profile switching lives in the header title dropdown, not here.
         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         Spacer(Modifier.height(12.dp))
-        DrawerItem("Bots", Icons.Outlined.SmartToy) { onNavigate("bots") }
         if (state.features.skills) {
             DrawerItem("Skills", Icons.Outlined.AutoAwesome) { onNavigate("skills") }
         }

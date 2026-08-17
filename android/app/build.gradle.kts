@@ -13,8 +13,8 @@ android {
         applicationId = "com.alara.hermes"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.8.2"
+        versionCode = 16
+        versionName = "0.9.0"
         vectorDrawables.useSupportLibrary = true
     }
 

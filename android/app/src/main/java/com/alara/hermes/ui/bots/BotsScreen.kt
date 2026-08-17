@@ -171,7 +171,7 @@ fun BotsScreen(
  * controls, and the room list renders whatever the server defines.
  */
 @Composable
-private fun RoomsTab(
+internal fun RoomsTab(
     state: HomeUiState,
     mediaAuth: MediaAuth?,
     onOpenRoom: (BotRoom) -> Unit,
@@ -190,7 +190,7 @@ private fun RoomsTab(
 }
 
 @Composable
-private fun CenteredNote(text: String) {
+internal fun CenteredNote(text: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(
             text,
@@ -201,7 +201,7 @@ private fun CenteredNote(text: String) {
 }
 
 @Composable
-private fun RoomRow(room: BotRoom, mediaAuth: MediaAuth?, onClick: () -> Unit) {
+internal fun RoomRow(room: BotRoom, mediaAuth: MediaAuth?, onClick: () -> Unit) {
     val manager = room.members.firstOrNull { it.profileId == room.managerProfileId }
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -303,7 +303,7 @@ private fun defaultShapeFor(name: String): String {
  * only to the gateway host, mirroring MediaGallery's rule.
  */
 @Composable
-private fun BotAvatar(
+internal fun BotAvatar(
     profile: HermesProfile,
     sizeDp: androidx.compose.ui.unit.Dp,
     mediaAuth: com.alara.hermes.ui.chat.MediaAuth?,
@@ -344,7 +344,7 @@ private fun BotAvatar(
 }
 
 @Composable
-private fun GeometricAvatar(
+internal fun GeometricAvatar(
     name: String,
     shapeOverride: String?,
     colorOverride: String?,
@@ -426,7 +426,7 @@ private fun GeometricAvatar(
 }
 
 @Composable
-private fun BotRow(
+internal fun BotRow(
     profile: HermesProfile,
     selected: Boolean,
     mediaAuth: MediaAuth?,

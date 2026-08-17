@@ -110,13 +110,23 @@ fun ChatPane(
     val entries = chat.timeline?.entries.orEmpty()
     val mediaAuth by viewModel.mediaAuth.collectAsState()
 
+    // Bot/room chats are QUIET by default: the manager speaks, activity is
+    // one tap away. Ordinary threads keep following the global setting.
+    val quietChat = chat.room != null || chat.title == HomeViewModel.BOT_CHAT_TITLE
+    var revealQuietTools by remember(chat.sessionKey) { mutableStateOf(false) }
+
     // reverseLayout: index 0 sits at the bottom, so opening a conversation
     // starts at the newest message, streaming growth stays anchored, and the
     // keyboard never pushes content out from under the reader.
-    val showTools = state.chatSettings.showToolActivity
+    val showTools = if (quietChat) revealQuietTools else state.chatSettings.showToolActivity
     val rows = remember(entries, showTools) {
         val visible = if (showTools) entries else entries.filterNot { it is ChatEntry.ToolRun }
         buildTranscriptRows(visible).asReversed()
+    }
+    val hiddenActivityCount = if (quietChat && !revealQuietTools) {
+        entries.count { it is ChatEntry.ToolRun }
+    } else {
+        0
     }
 
     val pinnedToBottom by remember {
@@ -185,6 +195,23 @@ fun ChatPane(
                     },
                 )
             }
+        }
+
+        // Quiet chats: activity stays backstage until asked for.
+        if (quietChat && (hiddenActivityCount > 0 || revealQuietTools)) {
+            Text(
+                if (revealQuietTools) {
+                    "hide background activity"
+                } else {
+                    "$hiddenActivityCount background step${if (hiddenActivityCount == 1) "" else "s"} · show"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { revealQuietTools = !revealQuietTools }
+                    .padding(horizontal = 18.dp, vertical = 4.dp),
+            )
         }
 
         Box(Modifier.weight(1f)) {
