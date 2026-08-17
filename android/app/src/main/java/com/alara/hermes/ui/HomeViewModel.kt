@@ -255,6 +255,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             while (isActive) {
                 delay(15_000)
                 refreshSessions(silent = true)
+                // Keep per-bot busy/last-active fresh so the chat header's
+                // working indicator tracks server-side work, not just turns
+                // this app started.
+                runCatching { loadProfiles(_state.value.activeProfile) }
+                loadRooms()
             }
         }
     }

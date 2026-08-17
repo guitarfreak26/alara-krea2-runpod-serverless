@@ -150,6 +150,7 @@ fun ChatPane(
             state = state,
             onBack = onBack,
             onOpenConfig = { configSheetOpen = true },
+            mediaAuth = mediaAuth,
         )
         // Room context: keep the member roster visible; tap for roles.
         chat.room?.let { room ->
@@ -328,8 +329,40 @@ private fun ChatHeader(
     state: HomeUiState,
     onBack: (() -> Unit)?,
     onOpenConfig: () -> Unit,
+    mediaAuth: com.alara.hermes.ui.chat.MediaAuth? = null,
 ) {
     val chat = state.chat
+    // Bot identity: a canonical Bot Chat wears the bot's display name and
+    // avatar; a room wears the room name with the manager's avatar.
+    val activeProfile = state.profiles.firstOrNull { it.id == state.activeProfile }
+    val isBotChat = chat.title == HomeViewModel.BOT_CHAT_TITLE && chat.room == null
+    val headerProfile = when {
+        chat.room != null -> chat.room.members.firstOrNull { it.profileId == chat.room.managerProfileId }
+            ?.let { m ->
+                com.alara.hermes.protocol.HermesProfile(
+                    id = m.profileId,
+                    displayName = m.displayName,
+                    avatarShape = m.avatarShape,
+                    avatarColor = m.avatarColor,
+                    avatarUrl = m.avatarUrl,
+                )
+            } ?: activeProfile
+        isBotChat -> activeProfile
+        else -> null
+    }
+    val headerTitle = when {
+        chat.room != null -> chat.room.displayName
+        isBotChat && activeProfile != null -> activeProfile.displayName
+        else -> chat.title.ifBlank { "New conversation" }
+    }
+    // "Is she actually doing it?" — working state from ANY signal: this
+    // app's live turn, the server's busy flag, activity within the native
+    // 90s window, or the session row still marked running.
+    val working = chat.timeline?.running == true ||
+        chat.room?.busy == true ||
+        activeProfile?.busy == true ||
+        (activeProfile?.lastActiveMs?.let { System.currentTimeMillis() - it < 90_000L } == true) ||
+        state.sessions.firstOrNull { it.key == chat.sessionKey }?.running == true
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLowest) {
         Column {
             Row(
@@ -346,9 +379,13 @@ private fun ChatHeader(
                 } else {
                     Spacer(Modifier.width(12.dp))
                 }
+                headerProfile?.let { profile ->
+                    com.alara.hermes.ui.bots.BotAvatar(profile, 34.dp, mediaAuth)
+                    Spacer(Modifier.width(10.dp))
+                }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        chat.title.ifBlank { "New conversation" },
+                        headerTitle,
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -356,7 +393,13 @@ private fun ChatHeader(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             buildString {
-                                append(state.activeProfile ?: "default")
+                                if (working) {
+                                    append("working…")
+                                } else if (headerProfile != null) {
+                                    append("online")
+                                } else {
+                                    append(state.activeProfile ?: "default")
+                                }
                                 val model = chat.config.model
                                     ?: state.models.firstOrNull { it.isCurrent }?.displayName
                                 model?.let { append("  ·  ").append(it.substringAfterLast('/')) }
@@ -365,11 +408,15 @@ private fun ChatHeader(
                                 if (chat.config.fastMode == true) append("  ·  fast")
                             },
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = if (working) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
-                        if (chat.timeline?.running == true) {
+                        if (working) {
                             Spacer(Modifier.width(8.dp))
                             RunningIndicator()
                         }
