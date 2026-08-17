@@ -446,6 +446,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 chat = ChatUiState(
                     sessionKey = sessionKey,
                     title = it.sessions.firstOrNull { s -> s.key == sessionKey }?.title ?: "New conversation",
+                    timeline = sessionKey?.let { key -> timelineCache[key] },
                 ),
             )
         }
@@ -470,9 +471,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         }
                     }
                 }
-                handleJobs += viewModelScope.launch {
-                    h.timeline.collect { t -> _state.update { it.copy(chat = it.chat.copy(timeline = t)) } }
-                }
+                handleJobs += collectTimeline(h)
                 handleJobs += viewModelScope.launch {
                     h.config.collect { c -> _state.update { it.copy(chat = it.chat.copy(config = c)) } }
                 }
@@ -482,6 +481,32 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 }
             }.onFailure { t ->
                 _state.update { it.copy(chat = it.chat.copy(error = clean(t.message))) }
+            }
+        }
+    }
+
+    /**
+     * Last rendered timeline per session: reopening a conversation seeds the
+     * transcript INSTANTLY from this cache (no blank frame / pop-in) and the
+     * authoritative refresh converges in place over stable entry ids.
+     */
+    private val timelineCache = HashMap<String, com.alara.hermes.protocol.TimelineState>()
+
+    private fun collectTimeline(h: SessionHandle) = viewModelScope.launch {
+        h.timeline.collect { t ->
+            if (t.entries.isNotEmpty()) timelineCache[h.sessionKey] = t
+            _state.update { st ->
+                val current = st.chat.timeline
+                // A fresh handle's initial empty state must not blank a seeded
+                // transcript — wait for real content (or a running turn).
+                if (t.entries.isEmpty() && !t.running &&
+                    current != null && current.entries.isNotEmpty() &&
+                    st.chat.sessionKey == h.sessionKey
+                ) {
+                    st
+                } else {
+                    st.copy(chat = st.chat.copy(timeline = t))
+                }
             }
         }
     }
@@ -566,7 +591,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             it.copy(
                 activeProfile = room.managerProfileId,
                 models = emptyList(),
-                chat = ChatUiState(sessionKey = room.sessionKey, title = room.displayName, room = room),
+                chat = ChatUiState(
+                    sessionKey = room.sessionKey,
+                    title = room.displayName,
+                    room = room,
+                    timeline = timelineCache[room.sessionKey],
+                ),
             )
         }
         viewModelScope.launch {
@@ -587,9 +617,7 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         )
                     }
                 }
-                handleJobs += viewModelScope.launch {
-                    h.timeline.collect { t -> _state.update { it.copy(chat = it.chat.copy(timeline = t)) } }
-                }
+                handleJobs += collectTimeline(h)
                 handleJobs += viewModelScope.launch {
                     h.config.collect { c -> _state.update { it.copy(chat = it.chat.copy(config = c)) } }
                 }
