@@ -521,10 +521,17 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
             }
             val sessions = runCatching { gw.listSessions(profileId) }.getOrDefault(emptyList())
             _state.update { it.copy(sessions = sortSessions(sessions), sessionsLoading = false) }
+            // Exactly ONE canonical Bot Chat per bot: title match first, then
+            // the local registry (which survives the list window missing the
+            // row) — only a genuinely absent chat opens a new one.
+            val known = container.settings.botChatIds.first()[profileId]
             val existing = sessions.firstOrNull {
                 it.title.equals(BOT_CHAT_TITLE, ignoreCase = true) && !it.archived
+            }?.key ?: known
+            if (existing != null) {
+                container.settings.setBotChatId(profileId, existing)
             }
-            container.pendingOpenSession.value = existing?.key ?: NEW_BOT_CHAT
+            container.pendingOpenSession.value = existing ?: NEW_BOT_CHAT
         }
     }
 
@@ -673,6 +680,12 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                         if (derived.isNotBlank()) {
                             runCatching { gateway?.renameSession(h.sessionKey, derived) }
                             _state.update { it.copy(chat = it.chat.copy(title = derived)) }
+                            if (derived == BOT_CHAT_TITLE) {
+                                // Register the canonical Bot Chat for this bot.
+                                _state.value.activeProfile?.let { profileId ->
+                                    container.settings.setBotChatId(profileId, h.sessionKey)
+                                }
+                            }
                         }
                     }
                 }

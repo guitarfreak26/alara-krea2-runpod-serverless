@@ -64,6 +64,7 @@ class SettingsRepository(
         val HiddenSources = stringSetPreferencesKey("hidden_session_sources")
         val ProfileNames = stringPreferencesKey("profile_names")
         val PinnedBots = stringSetPreferencesKey("pinned_bots")
+        val BotChatIds = stringSetPreferencesKey("bot_chat_ids")
     }
 
     val serverSettings: Flow<ServerSettings> = context.dataStore.data.map { prefs ->
@@ -163,6 +164,25 @@ class SettingsRepository(
             val current = prefs[Keys.PinnedBots] ?: emptySet()
             prefs[Keys.PinnedBots] =
                 if (profileId in current) current - profileId else current + profileId
+        }
+    }
+
+    /**
+     * Canonical Bot Chat session per profile ("profile|sessionKey"). Keeps
+     * exactly ONE Bot Chat per bot even when the session-list window misses
+     * the canonical row.
+     */
+    val botChatIds: Flow<Map<String, String>> = context.dataStore.data.map { prefs ->
+        (prefs[Keys.BotChatIds] ?: emptySet()).mapNotNull { entry ->
+            entry.split("|", limit = 2).takeIf { it.size == 2 }?.let { it[0] to it[1] }
+        }.toMap()
+    }
+
+    suspend fun setBotChatId(profileId: String, sessionKey: String) {
+        context.dataStore.edit { prefs ->
+            val kept = (prefs[Keys.BotChatIds] ?: emptySet())
+                .filterNot { it.startsWith("$profileId|") }
+            prefs[Keys.BotChatIds] = (kept + "$profileId|$sessionKey").toSet()
         }
     }
 

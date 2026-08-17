@@ -471,8 +471,11 @@ class ApiServerGateway(
             profilePrefixes = profilePrefixes + (room.managerProfileId to prefix.trim('/'))
         }
         setActiveProfile(room.managerProfileId)
+        val pinned = room.apiPrefix?.trim('/')
+            ?: profilePrefixes[room.managerProfileId]
+            ?: if (room.managerProfileId != "default") "p/${room.managerProfileId}" else ""
         val handle = handles.getOrPut(room.sessionKey) {
-            ApiSessionHandle(room.sessionKey, roomId = room.id)
+            ApiSessionHandle(room.sessionKey, roomId = room.id, pinnedPrefix = pinned)
         }
         return handle
     }
@@ -888,6 +891,9 @@ class ApiServerGateway(
         private val isNew: Boolean = false,
         /** Non-null for Bot Mode rooms: sends route through the room contract. */
         private val roomId: String? = null,
+        /** Room handles pin their discovered api_prefix so LATER profile
+         *  switches can never misroute in-flight history/run/steer calls. */
+        private val pinnedPrefix: String? = null,
     ) : SessionHandle {
 
         /** True once the authoritative transcript has loaded at least once. */
@@ -895,6 +901,20 @@ class ApiServerGateway(
 
         /** Highest `seq` seen on the current run stream (reconnect dedupe). */
         @Volatile private var lastEventSeq = -1L
+
+        /** URL scoped to this handle's pinned prefix (rooms), else the gateway's. */
+        private fun hUrl(vararg segments: String): okhttp3.HttpUrl {
+            val prefix = pinnedPrefix ?: return url(*segments)
+            val builder = baseUrl.newBuilder()
+            if (prefix.isNotEmpty()) builder.addPathSegments(prefix)
+            segments.forEach { builder.addPathSegments(it) }
+            return builder.build()
+        }
+
+        /** Outgoing messages retained by client_message_id until the server
+         *  echoes them in the transcript — reconnects/navigation can't eat
+         *  a message that was accepted but not yet persisted-visible. */
+        private val pendingOutgoing = LinkedHashMap<String, ChatEntry.Message>()
         override val profileId: String = "default"
 
         private val _timeline = MutableStateFlow(TimelineState(sessionKey))
@@ -917,14 +937,27 @@ class ApiServerGateway(
                 historyLoaded = true
                 return
             }
-            val rows = dataRows(getJson(url("api/sessions", sessionKey, "messages")))
+            val rows = dataRows(getJson(hUrl("api/sessions", sessionKey, "messages")))
             val messages = rows.mapNotNull { row ->
                 runCatching {
                     json.decodeFromJsonElement(ProtocolMessage.serializer(), row)
                 }.getOrNull()
             }
             _timeline.update { state ->
-                TimelineReducer.rehydrate(state, messages, System.currentTimeMillis())
+                val rehydrated = TimelineReducer.rehydrate(state, messages, System.currentTimeMillis())
+                if (pendingOutgoing.isEmpty()) {
+                    rehydrated
+                } else {
+                    // Echoed = same USER text now present in the transcript.
+                    val echoed = rehydrated.entries.filterIsInstance<ChatEntry.Message>()
+                        .filter { it.role == Role.USER }.mapTo(HashSet()) { it.text }
+                    pendingOutgoing.entries.removeAll { it.value.text in echoed }
+                    if (pendingOutgoing.isEmpty()) {
+                        rehydrated
+                    } else {
+                        rehydrated.copy(entries = rehydrated.entries + pendingOutgoing.values)
+                    }
+                }
             }
             historyLoaded = true
         }
@@ -1020,20 +1053,19 @@ class ApiServerGateway(
                 put("client_message_id", messageId)
             }
             interrupted = false
+            val outgoing = ChatEntry.Message(
+                id = EntryId("local-user:$sessionKey:$messageId"),
+                timestampMs = System.currentTimeMillis(),
+                role = Role.USER,
+                text = text,
+            )
+            pendingOutgoing[messageId] = outgoing
             _timeline.update { state ->
-                state.copy(
-                    running = true,
-                    entries = state.entries + ChatEntry.Message(
-                        id = EntryId("local-user:$sessionKey:$messageId"),
-                        timestampMs = System.currentTimeMillis(),
-                        role = Role.USER,
-                        text = text,
-                    ),
-                )
+                state.copy(running = true, entries = state.entries + outgoing)
             }
             val started = withContext(Dispatchers.IO) {
                 restClient.newCall(
-                    request(url("v1/bot-mode/rooms", room, "messages"))
+                    request(hUrl("v1/bot-mode/rooms", room, "messages"))
                         .post(body.toString().toRequestBody(jsonMedia)).build(),
                 ).execute().use { response ->
                     val payload = response.body?.string().orEmpty()
@@ -1045,6 +1077,7 @@ class ApiServerGateway(
                                 ?.get("error") as? JsonObject)
                                 ?.get("message") as? JsonPrimitive)?.contentOrNull
                         }.getOrNull()
+                        pendingOutgoing.remove(messageId)
                         finishTurn(error = null)
                         throw HermesHttpException(
                             response.code,
@@ -1093,7 +1126,7 @@ class ApiServerGateway(
                 modelOptions()?.let { put("model_options", it) }
             }
             val call = client.newCall(
-                request(url("api/sessions", sessionKey, "chat", "stream"))
+                request(hUrl("api/sessions", sessionKey, "chat", "stream"))
                     .header("Accept", "text/event-stream")
                     .post(body.toString().toRequestBody(jsonMedia))
                     .build(),
@@ -1251,7 +1284,7 @@ class ApiServerGateway(
             }
             val started = withContext(Dispatchers.IO) {
                 restClient.newCall(
-                    request(url("v1/runs"))
+                    request(hUrl("v1/runs"))
                         .post(body.toString().toRequestBody(jsonMedia)).build(),
                 ).execute().use { response ->
                     val payload = response.body?.string().orEmpty()
@@ -1277,8 +1310,8 @@ class ApiServerGateway(
          * SSE stream. Shared by run and room turns; frames carrying `seq`
          * numbers are deduplicated so reconnects never repeat rendered events.
          */
-        private fun attachRunEventStream(runId: String) {
-            val target = url("v1/runs", runId, "events").let { base ->
+        private fun attachRunEventStream(runId: String, attempt: Int = 0) {
+            val target = hUrl("v1/runs", runId, "events").let { base ->
                 if (lastEventSeq >= 0) {
                     base.newBuilder().addQueryParameter("cursor", lastEventSeq.toString()).build()
                 } else {
@@ -1320,12 +1353,26 @@ class ApiServerGateway(
                     if (interrupted) {
                         finishTurn(error = null)
                     } else if (_timeline.value.running) {
+                        // The run may still be LIVE server-side (network blip,
+                        // backgrounding): resume the stream from the last seq
+                        // instead of settling early. Frames replayed by the
+                        // cursor dedupe on seq.
+                        val live = runCatching {
+                            ((getJson(hUrl("v1/runs", runId)) as? JsonObject)
+                                ?.get("status") as? JsonPrimitive)?.contentOrNull
+                        }.getOrNull() in setOf("running", "queued", "waiting_for_approval")
+                        if (live && attempt < 5) {
+                            kotlinx.coroutines.delay(1500L * (attempt + 1))
+                            activeCall = null
+                            attachRunEventStream(runId, attempt + 1)
+                            return@launch
+                        }
                         runCatching { settleFromRunStatus(runId) }
                             .onFailure { finishTurn(error = t.message ?: "run stream failed") }
                     }
                 } finally {
-                    activeCall = null
-                    activeRunId = null
+                    if (activeCall === call) activeCall = null
+                    if (streamJob?.isActive != true) activeRunId = null
                 }
             }
         }
@@ -1479,7 +1526,7 @@ class ApiServerGateway(
         }
 
         private suspend fun settleFromRunStatus(runId: String) {
-            val status = getJson(url("v1/runs", runId)) as? JsonObject
+            val status = getJson(hUrl("v1/runs", runId)) as? JsonObject
             val state = (status?.get("status") as? JsonPrimitive)?.contentOrNull
             val output = (status?.get("output") as? JsonPrimitive)?.contentOrNull
             when (state) {
@@ -1539,7 +1586,7 @@ class ApiServerGateway(
                 }
             }
             val call = client.newCall(
-                request(url("v1/chat/completions"))
+                request(hUrl("v1/chat/completions"))
                     .header("Accept", "text/event-stream")
                     .header("X-Hermes-Session-Id", sessionKey)
                     .post(body.toString().toRequestBody(jsonMedia))
@@ -1684,7 +1731,7 @@ class ApiServerGateway(
                 runCatching {
                     withContext(Dispatchers.IO) {
                         restClient.newCall(
-                            request(url("v1/runs", runId, "stop"))
+                            request(hUrl("v1/runs", runId, "stop"))
                                 .post("{}".toRequestBody(jsonMedia)).build(),
                         ).execute().close()
                     }
@@ -1708,7 +1755,7 @@ class ApiServerGateway(
             return runCatching {
                 withContext(Dispatchers.IO) {
                     restClient.newCall(
-                        request(url("v1/runs", runId, "steer"))
+                        request(hUrl("v1/runs", runId, "steer"))
                             .post(body.toString().toRequestBody(jsonMedia)).build(),
                     ).execute().use { it.isSuccessful }
                 }
@@ -1721,7 +1768,7 @@ class ApiServerGateway(
             val body = buildJsonObject { put("choice", choice) }
             withContext(Dispatchers.IO) {
                 restClient.newCall(
-                    request(url("v1/runs", runId, "approval"))
+                    request(hUrl("v1/runs", runId, "approval"))
                         .post(body.toString().toRequestBody(jsonMedia)).build(),
                 ).execute().use { response ->
                     if (!response.isSuccessful) {
