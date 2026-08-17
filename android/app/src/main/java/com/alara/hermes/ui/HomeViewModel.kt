@@ -757,9 +757,47 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
     /** Called on app foreground: reconcile with the authoritative backend. */
     fun onForeground() {
         viewModelScope.launch {
-            gateway?.connect()
+            val gw = gateway
+            // Re-probe capabilities on every foreground: the VPS may have
+            // deployed new features while the app slept, and a stale cached
+            // snapshot must never keep gating them off.
+            gw?.let { runCatching { it.testConnection() } }
+            _state.update { it.copy(features = gw?.features ?: it.features) }
+            loadRooms()
+            gw?.let { loadProfiles(_state.value.activeProfile) }
             handle?.let { runCatching { it.refresh() } }
             refreshSessions(silent = true)
+        }
+    }
+
+    /**
+     * Gate for avatar editing that distinguishes UNKNOWN from FALSE: a stale
+     * or missing capability snapshot triggers a fresh probe, and the "newer
+     * server required" message only shows when a SUCCESSFUL probe still says
+     * the feature is absent.
+     */
+    fun ensureAvatarEditing(onResult: (Boolean) -> Unit) {
+        val gw = gateway ?: return onResult(false)
+        if (gw.features.avatarEditing) {
+            onResult(true)
+            return
+        }
+        viewModelScope.launch {
+            val probe = runCatching { gw.testConnection().getOrThrow() }
+            _state.update { it.copy(features = gw.features) }
+            when {
+                gw.features.avatarEditing -> onResult(true)
+                probe.isFailure -> {
+                    _state.update {
+                        it.copy(notice = clean("Couldn't check server capabilities: ${probe.exceptionOrNull()?.message}"))
+                    }
+                    onResult(false)
+                }
+                else -> {
+                    showNotice("Avatar editing requires a newer ALARA server")
+                    onResult(false)
+                }
+            }
         }
     }
 

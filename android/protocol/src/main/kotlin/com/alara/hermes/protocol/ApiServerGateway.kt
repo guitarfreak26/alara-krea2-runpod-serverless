@@ -484,6 +484,11 @@ class ApiServerGateway(
     ): ProfileAppearance {
         if (capabilities == null) connect()
         if (capabilities?.botAppearance != true) {
+            // The cached snapshot may predate a server deploy: re-probe once
+            // before declaring the server too old.
+            runCatching { testConnection() }
+        }
+        if (capabilities?.botAppearance != true) {
             throw HermesRpcException("Avatar editing requires a newer ALARA server")
         }
         val payload = withContext(Dispatchers.IO) {

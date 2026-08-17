@@ -123,10 +123,11 @@ fun AgentsPane(
                         mediaAuth = mediaAuth,
                         onClick = { onOpenBot(profile) },
                         onLongClick = {
-                            if (state.features.avatarEditing) {
-                                editTarget = profile
-                            } else {
-                                viewModel.showNotice("Avatar editing requires a newer ALARA server")
+                            // ensureAvatarEditing re-probes a stale capability
+                            // cache; the "newer server" notice only appears
+                            // when a live probe explicitly says false.
+                            viewModel.ensureAvatarEditing { supported ->
+                                if (supported) editTarget = profile
                             }
                         },
                     )
