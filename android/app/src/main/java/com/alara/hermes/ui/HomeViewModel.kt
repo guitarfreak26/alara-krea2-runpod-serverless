@@ -468,7 +468,11 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         }
     }
 
-    fun send(text: String, attachments: List<com.alara.hermes.protocol.OutgoingAttachment> = emptyList()) {
+    fun send(
+        text: String,
+        attachments: List<com.alara.hermes.protocol.OutgoingAttachment> = emptyList(),
+        mentions: List<String> = emptyList(),
+    ) {
         val h = handle ?: return
         if (_state.value.chat.loadFailed) return
         if (text.isBlank() && attachments.isEmpty()) return
@@ -496,19 +500,23 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
                 it is com.alara.hermes.protocol.ChatEntry.Message &&
                     it.role == com.alara.hermes.protocol.Role.USER
             }
-        // Room sends carry structured mentions: only CURRENT room members
-        // whose @DisplayName or @id appears in the text — an unknown mention
-        // never reaches the server as metadata.
+        // Structured mentions come from the composer's picker state; the
+        // scan below only backstops hand-typed mentions, and everything is
+        // filtered to CURRENT room members — an unknown name never becomes
+        // mention metadata.
         val room = _state.value.chat.room
-        val mentions = room?.members.orEmpty().filter { member ->
+        val members = room?.members.orEmpty()
+        val memberIds = members.map { it.profileId }.toSet()
+        val scanned = members.filter { member ->
             text.contains("@${member.mentionLabel}", ignoreCase = true) ||
                 text.contains("@${member.displayName}", ignoreCase = true) ||
                 text.contains("@${member.profileId}", ignoreCase = true)
         }.map { it.profileId }
+        val roomMentions = (mentions.filter { it in memberIds } + scanned).distinct()
         _state.update { it.copy(chat = it.chat.copy(sending = true, error = null)) }
         viewModelScope.launch {
             runCatching {
-                if (room != null) h.sendWithMentions(text, mentions) else h.send(text, attachments)
+                if (room != null) h.sendWithMentions(text, roomMentions) else h.send(text, attachments)
             }
                 .onSuccess {
                     // The server never titles sessions minted from this surface;

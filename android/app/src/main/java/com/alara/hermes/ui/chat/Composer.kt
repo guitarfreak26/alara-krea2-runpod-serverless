@@ -112,7 +112,7 @@ fun Composer(
     sending: Boolean,
     running: Boolean,
     offline: Boolean,
-    onSend: (String, List<OutgoingAttachment>) -> Unit,
+    onSend: (String, List<OutgoingAttachment>, List<String>) -> Unit,
     onStop: () -> Unit,
     draftLoader: suspend (String) -> String,
     onDraftChange: (String, String) -> Unit,
@@ -130,6 +130,39 @@ fun Composer(
     val pendingText = remember(sessionKey) { mutableStateListOf<PendingTextFile>() }
     var attachmentError by remember { mutableStateOf<String?>(null) }
     var attachMenuOpen by remember { mutableStateOf(false) }
+    var mentionMenuOpen by remember { mutableStateOf(false) }
+
+    // Mentions picked in this draft: profileId -> inserted label. The IDs
+    // travel STRUCTURALLY to the send payload (kept only while their @label
+    // is still present in the text); text scanning is just a fallback for
+    // hand-typed mentions.
+    val pickedMentions = remember(sessionKey) { androidx.compose.runtime.mutableStateMapOf<String, String>() }
+
+    fun mentionsForSend(message: String): List<String> {
+        val picked = pickedMentions.filterValues { label ->
+            message.contains("@$label", ignoreCase = true)
+        }.keys
+        val typed = roomMembers.filter { member ->
+            val firstWord = member.displayName.substringBefore(' ')
+            message.contains("@${member.mentionLabel}", ignoreCase = true) ||
+                message.contains("@${member.displayName}", ignoreCase = true) ||
+                message.contains("@${member.profileId}", ignoreCase = true) ||
+                (firstWord.length >= 3 && message.contains("@$firstWord", ignoreCase = true))
+        }.map { it.profileId }
+        return (picked + typed).distinct()
+    }
+
+    fun insertMention(member: com.alara.hermes.protocol.RoomMember) {
+        val label = member.mentionLabel
+        pickedMentions[member.profileId] = label
+        text = if (text.endsWith("@")) {
+            // Triggered by typing '@': complete the token in place.
+            text.dropLast(1) + "@$label "
+        } else {
+            val prefix = if (text.isEmpty() || text.endsWith(" ")) "" else " "
+            "$text$prefix@$label "
+        }
+    }
 
     // Shared by the file picker and the system share-sheet ingress.
     suspend fun importUri(uri: Uri) {
@@ -373,7 +406,6 @@ fun Composer(
                 }
             }
             if (roomMembers.isNotEmpty()) {
-                var mentionMenuOpen by remember { mutableStateOf(false) }
                 Box {
                     IconButton(onClick = { mentionMenuOpen = true }) {
                         Icon(
@@ -386,6 +418,12 @@ fun Composer(
                         expanded = mentionMenuOpen,
                         onDismissRequest = { mentionMenuOpen = false },
                     ) {
+                        Text(
+                            "Mention a member",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                        )
                         roomMembers.forEach { member ->
                             androidx.compose.material3.DropdownMenuItem(
                                 text = {
@@ -403,8 +441,7 @@ fun Composer(
                                 },
                                 onClick = {
                                     mentionMenuOpen = false
-                                    val prefix = if (text.isEmpty() || text.endsWith(" ")) "" else " "
-                                    text += "$prefix@${member.mentionLabel} "
+                                    insertMention(member)
                                 },
                             )
                         }
@@ -413,7 +450,14 @@ fun Composer(
             }
             BasicTextField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = { new ->
+                    // Typing '@' at a word start pops the room member picker.
+                    val typedAt = roomMembers.isNotEmpty() &&
+                        new.length == text.length + 1 && new.endsWith("@") &&
+                        (new.length == 1 || new[new.length - 2].isWhitespace())
+                    text = new
+                    if (typedAt) mentionMenuOpen = true
+                },
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
@@ -461,10 +505,11 @@ fun Composer(
                 onClick = {
                     val message = embedTextFiles(text.trim(), pendingText.toList())
                     if (message.isNotEmpty() || pending.isNotEmpty()) {
-                        onSend(message, pending.map { it.attachment })
+                        onSend(message, pending.map { it.attachment }, mentionsForSend(message))
                         text = ""
                         pending.clear()
                         pendingText.clear()
+                        pickedMentions.clear()
                     }
                 },
                 enabled = (text.isNotBlank() || pending.isNotEmpty() || pendingText.isNotEmpty()) && !sending,

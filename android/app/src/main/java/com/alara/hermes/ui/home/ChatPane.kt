@@ -272,7 +272,7 @@ fun ChatPane(
             sending = chat.sending || chat.loadFailed,
             running = chat.timeline?.running == true,
             offline = state.connection !is com.alara.hermes.protocol.ConnectionState.Connected,
-            onSend = viewModel::send,
+            onSend = { text, attachments, mentions -> viewModel.send(text, attachments, mentions) },
             onStop = viewModel::interrupt,
             draftLoader = { key -> viewModel.draftFor(key) },
             onDraftChange = viewModel::saveDraft,
